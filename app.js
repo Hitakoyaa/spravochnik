@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.2";
+const APP_VERSION = "1.3";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -208,6 +208,7 @@ function viewHome() {
     const sv = (z) => { const p = byKey(products(), z.key); return p ? p.svobodno_kg : (z.svobodno_kg || 0); };
     return sv(x) - sv(y);
   }).forEach((a) => {
+    if (a.tip === "tara") { alerts.push({ t: a.name, s: `не хватает ${N(-a.svobodno_kg)} шт, чтобы вытарить под разнарядки`, h: "#tara/" + encodeURIComponent(a.key), bad: true }); return; }
     if (a.tip === "syrie") { alerts.push({ t: a.name + " — сырьё", s: `не хватает ${T(-a.svobodno_kg)} т под комбикорм для хозяйств`, h: "#razn/kombi", bad: true }); return; }
     const p = byKey(products(), a.key);
     alerts.push({ t: p ? p.name : a.text, s: p ? `не хватает ${T(-p.svobodno_kg)} т под разнарядки` : "", h: "#item/" + encodeURIComponent(a.key), bad: true });
@@ -271,7 +272,7 @@ function viewStock(chip) {
     const work = tara().filter((m) => m.v_rabote && match(Q, m.name, m.mesto, (m.dlya || []).join(" ")))
       .sort((a, b) => (a.hvatit_dney == null ? 1e9 : a.hvatit_dney) - (b.hvatit_dney == null ? 1e9 : b.hvatit_dney));
     const rest = tara().filter((m) => !m.v_rabote);
-    body = `<div class="note">В работе — мешки и этикетки продукции, которая вырабатывалась за последние ${DATA.meta.nastroyki ? DATA.meta.nastroyki.v_rabote_dney : 30} дней или есть в активных разнарядках. Расход — по средней выработке фасовки.</div>` +
+    body = taraPodRazn() + `<div class="note">В работе — мешки и этикетки продукции, которая вырабатывалась за последние ${DATA.meta.nastroyki ? DATA.meta.nastroyki.v_rabote_dney : 30} дней или есть в активных разнарядках. Расход — по средней выработке фасовки.</div>` +
       work.map(taraRow).join("") + (work.length ? "" : `<div class="empty">Ничего не найдено</div>`) +
       `<button class="btn sec" data-go="#taraall">Подробнее: все остальные (${rest.length})</button>`;
   } else {
@@ -298,10 +299,29 @@ function krupaSyrie() {
     s.map((x) => `<div><span>${esc(x.syrie)}</span><b class="num">${x.v_bunkere_kg ? "в бункере " + W(x.v_bunkere_kg) : ""}${x.v_bunkere_kg && x.ne_zatareno_kg ? "<br>" : ""}${x.ne_zatareno_kg ? '<span class="warn">не затарено ' + W(x.ne_zatareno_kg) + "</span>" : ""}</b></div>`).join("") + `</div>`;
 }
 
+function prTxt(m) {
+  if (!m.pod_razn_nuzhno) return "";
+  const r = m.pod_razn_raznica;
+  return `<span class="d num ${r < 0 ? "bad" : "ok"}" style="font-weight:800">под разнарядки: ${r < 0 ? "не хватает " + N(-r) : "излишек " + N(r)} ${esc(m.ed)}</span>`;
+}
 function taraRow(m) {
   return `<button class="row" data-go="#tara/${encodeURIComponent(m.key)}">
-    <span class="m"><span class="n">${esc(m.name)}</span><span class="d num">${esc(m.mesto)} · ${N(m.ostatok)} ${esc(m.ed)}${m.rashod_v_sutki ? " · расход ~" + N(m.rashod_v_sutki) + "/сут" : ""}</span></span>
+    <span class="m"><span class="n">${esc(m.name)}</span><span class="d num">${esc(m.mesto)} · ${N(m.ostatok)} ${esc(m.ed)}${m.rashod_v_sutki ? " · расход ~" + N(m.rashod_v_sutki) + "/сут" : ""}</span>${prTxt(m)}</span>
     <span class="r"><span class="badge ${daysCls(m.hvatit_dney)} num">${daysTxt(m.hvatit_dney)}</span></span></button>`;
+}
+function taraPodRazn() {
+  const seen = new Set();
+  const list = tara().filter((m) => m.pod_razn_nuzhno && match(Q, m.name, m.mesto, (m.dlya || []).join(" "))).filter((m) => {
+    const k = (m.pod_razn_vmeste || [m.name]).join("|"); if (seen.has(k)) return false; seen.add(k); return true;
+  }).sort((a, b) => a.pod_razn_raznica - b.pod_razn_raznica);
+  if (!list.length) return "";
+  const bad = list.filter((m) => m.pod_razn_raznica < 0).length;
+  return `<div class="h2">Под разнарядки (надо вытарить)${bad ? " · не хватает " + bad : ""}</div>` + list.map((m) => {
+    const r = m.pod_razn_raznica, nm = (m.pod_razn_vmeste || [m.name]).join(" + ");
+    return `<button class="row" data-go="#tara/${encodeURIComponent(m.key)}" style="align-items:flex-start">
+      <span class="m"><span class="n">${esc(nm)}</span><span class="d num">нужно ${N(m.pod_razn_nuzhno)} · есть ${N(m.pod_razn_ostatok)} ${esc(m.ed)}</span><span class="d">${esc((m.dlya || []).join(", "))}</span></span>
+      <span class="r"><span class="badge ${r < 0 ? "b-bad" : "b-ok"} num">${r < 0 ? "не хватает " + N(-r) : "излишек " + N(r)}</span></span></button>`;
+  }).join("") + `<div class="h2">Запас по дням (в работе)</div>`;
 }
 
 function viewTaraAll() {
@@ -366,6 +386,8 @@ function viewTara(key) {
       <div><span>Расход в сутки (средний)</span><b class="num">${m.rashod_v_sutki ? "~" + N(m.rashod_v_sutki) + " " + esc(m.ed) : "—"}</b></div>
       <div><span>Расход с начала месяца</span><b class="num">${N(m.rashod_s_nachala_mes)} ${esc(m.ed)}</b></div>
       <div><span>В работе</span><b>${m.v_rabote ? "да" : "нет"}</b></div>
+      ${m.pod_razn_nuzhno ? `<div><span>Нужно под разнарядки${m.pod_razn_vmeste ? " (вместе: " + esc(m.pod_razn_vmeste.join(" + ")) + ")" : ""}</span><b class="num">${N(m.pod_razn_nuzhno)} ${esc(m.ed)}</b></div>
+      <div><span>${m.pod_razn_raznica < 0 ? "Не хватает" : "Излишек"} под разнарядки</span><b class="num ${m.pod_razn_raznica < 0 ? "bad" : "ok"}">${N(Math.abs(m.pod_razn_raznica))} ${esc(m.ed)}</b></div>` : ""}
     </div>
     ${(m.dlya || []).length ? `<div class="h2">Для продукции</div>` + (prods.length ? prods.map(prodRow).join("") : `<div class="card kv">${m.dlya.map((d) => `<div><span>${esc(d)}</span><b></b></div>`).join("")}</div>`) : ""}
     <div class="note">Расход = средняя выработка этой фасовки за ${DATA.meta.nastroyki ? DATA.meta.nastroyki.period_sredney_dney : 90} дней (в дни работы) ÷ вес мешка. Это оценка «если линия работает на этом мешке».</div>`;
