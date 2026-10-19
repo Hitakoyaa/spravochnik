@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.0";
+const APP_VERSION = "1.0.1";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -505,6 +505,8 @@ function render(mainOnly) {
   if (mainOnly) return;
   document.getElementById("top").innerHTML = v.top;
   renderNav(r);
+  const on = document.querySelector(".chip.on");
+  if (on) on.scrollIntoView({ inline: "center", block: "nearest" });
 }
 
 function rerenderKeepFocus() {
@@ -581,5 +583,9 @@ applyTheme();
 render();
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => { navigator.serviceWorker.register("sw.js").catch(() => { /* */ }); });
+  // при выходе новой версии — один раз перезагрузиться, чтобы сразу открылась она
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
+  window.addEventListener("load", () => { navigator.serviceWorker.register("sw.js").then((r) => r.update()).catch(() => { /* */ }); });
 }
