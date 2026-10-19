@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.3";
+const APP_VERSION = "1.4";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -13,7 +13,7 @@ let DATA = lsGet(LS_DATA, null);
 let SET = Object.assign({ theme: "auto", porog: 15 }, lsGet(LS_SET, {}));
 let Q = "";            // строка поиска
 let lastRoute = "";
-let showAllAlerts = false;
+const openGroups = new Set();
 
 /* ───────── формат ───────── */
 const nf1 = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -203,27 +203,48 @@ function viewHome() {
     { l: "К отгрузке", v: T(toShip), u: "т", s: act.length + " " + plural(act.length, "активная строка", "активные строки", "активных строк"), h: "#razn/active" },
     { l: "Корм. мука и отруби", v: T(korm), u: "т", s: "мельницы и комбикорм", h: "#stock/korm" }
   ];
-  const alerts = [];
-  (DATA.ostatki.vnimanie || []).slice().sort((x, y) => {
-    const sv = (z) => { const p = byKey(products(), z.key); return p ? p.svobodno_kg : (z.svobodno_kg || 0); };
-    return sv(x) - sv(y);
-  }).forEach((a) => {
-    if (a.tip === "tara") { alerts.push({ t: a.name, s: `не хватает ${N(-a.svobodno_kg)} шт, чтобы вытарить под разнарядки`, h: "#tara/" + encodeURIComponent(a.key), bad: true }); return; }
-    if (a.tip === "syrie") { alerts.push({ t: a.name + " — сырьё", s: `не хватает ${T(-a.svobodno_kg)} т под комбикорм для хозяйств`, h: "#razn/kombi", bad: true }); return; }
-    const p = byKey(products(), a.key);
-    alerts.push({ t: p ? p.name : a.text, s: p ? `не хватает ${T(-p.svobodno_kg)} т под разнарядки` : "", h: "#item/" + encodeURIComponent(a.key), bad: true });
+  const G = { prod: [], tara: [], syrie: [], sbor: [] };
+  (DATA.ostatki.vnimanie || []).forEach((a) => {
+    if (a.tip === "tara") G.tara.push({ t: a.name, v: "−" + N(-a.svobodno_kg) + " шт", sort: a.svobodno_kg, sub: "под разнарядки", h: "#tara/" + encodeURIComponent(a.key), bad: true });
+    else if (a.tip === "syrie") G.syrie.push({ t: a.name, v: "−" + T(-a.svobodno_kg) + " т", sort: a.svobodno_kg, h: "#razn/kombi", bad: true });
+    else {
+      const p = byKey(products(), a.key);
+      if (p) G.prod.push({ t: p.name, v: "−" + W(-p.svobodno_kg), sort: p.svobodno_kg, kg: -p.svobodno_kg, h: "#item/" + encodeURIComponent(a.key), bad: true });
+    }
   });
-  taraLow().forEach((m) => alerts.push({ t: m.name, s: `хватит на ${daysTxt(m.hvatit_dney)} · остаток ${N(m.ostatok)} ${m.ed}`, h: "#tara/" + encodeURIComponent(m.key), bad: m.hvatit_dney < 7 }));
-  (DATA.meta.preduprezhdeniya || []).forEach((w) => alerts.push({ t: "Сборщик", s: w, h: "#about" }));
+  const taraSeen = new Set(G.tara.map((x) => x.t));
+  taraLow().forEach((m) => {
+    if (taraSeen.has(m.name) || (m.pod_razn_vmeste || []).some((n) => taraSeen.has(m.pod_razn_vmeste.join(" + ")))) return;
+    G.tara.push({ t: m.name, v: daysTxt(m.hvatit_dney), sort: 1e9 + m.hvatit_dney, sub: "запас", h: "#tara/" + encodeURIComponent(m.key), bad: m.hvatit_dney < 7 });
+  });
+  (DATA.meta.preduprezhdeniya || []).forEach((w) => G.sbor.push({ t: w, v: "", sort: 0, h: "#about" }));
+  Object.values(G).forEach((l) => l.sort((a, b) => a.sort - b.sort));
+  const groups = [
+    { id: "prod", title: "Продукции не хватает под разнарядки", sum: G.prod.length ? "надо вытарить всего " + T(G.prod.reduce((s, x) => s + x.kg, 0)) + " т" : "", go: "#stock/all" },
+    { id: "tara", title: "Мешкотара и этикетки", sum: (() => { const d = G.tara.filter((x) => x.sub === "под разнарядки").length, l = G.tara.length - d; return [d ? `не хватает под разнарядки: ${d}` : "", l ? `запас меньше ${SET.porog} дн.: ${l}` : ""].filter(Boolean).join(" · "); })(), go: "#stock/tara" },
+    { id: "syrie", title: "Сырьё для комбикорма", sum: "не хватает под потребность хозяйств ТНК", go: "#razn/kombi" },
+    { id: "sbor", title: "Предупреждения сборщика", sum: "проверьте файлы на ПК", go: "#about" }
+  ].filter((g) => G[g.id].length);
   const old = daysOld(DATA.meta.data_na_utro);
-  if (old >= 1) alerts.unshift({ t: "Данные устарели", s: `на ${DATA.meta.data_na_utro} — обновите архив`, h: "#load", bad: old > 3 });
+  let att = old >= 1 ? `<button class="alert ${old > 3 ? "bad" : ""}" data-go="#load"><span class="${old > 3 ? "bad" : "warn"}">${I.warn}</span><span style="flex:1;min-width:0"><span class="a1">Данные устарели</span><span class="a2 num">на ${esc(DATA.meta.data_na_utro)} — обновите архив</span></span></button>` : "";
+  att += groups.map((g) => {
+    const items = G[g.id], open = openGroups.has(g.id), shown = open ? items : items.slice(0, 3);
+    return `<div class="card grp">
+      <button class="grph" data-grp="${g.id}">
+        <span class="${g.id === "sbor" ? "warn" : "bad"}">${I.warn}</span>
+        <span style="flex:1;min-width:0"><span class="a1">${esc(g.title)}</span><span class="a2 num">${esc(g.sum)}</span></span>
+        <span class="badge ${g.id === "sbor" ? "b-warn" : "b-bad"} num">${items.length}</span>
+      </button>
+      ${shown.map((x) => `<button class="grpi" data-go="${x.h}"><span class="gn">${esc(x.t)}</span><span class="gv num ${x.bad ? "bad" : "warn"}">${esc(x.v)}</span></button>`).join("")}
+      ${items.length > 3 ? `<button class="grpm" data-grp="${g.id}">${open ? "Свернуть" : "Ещё " + (items.length - 3) + " · показать все"}</button>` : ""}
+    </div>`;
+  }).join("");
+  const total = groups.reduce((s, g) => s + G[g.id].length, 0) + (old >= 1 ? 1 : 0);
   return {
     top: header("Справочник экономиста · ТОО «Урожай»", "Поиск по всем данным"),
     main: `<div class="tiles">${tiles.map((t) => `<button class="tile" data-go="${t.h}"><span class="l">${t.l}</span><span class="v num">${t.v} <small>${t.u}</small></span><span class="s">${esc(t.s)}</span></button>`).join("")}</div>
-    <div class="h2">Требует внимания${alerts.length ? " · " + alerts.length : ""}</div>
-    ${alerts.length ? alerts.slice(0, showAllAlerts ? 999 : 6).map((a) => `<button class="alert ${a.bad ? "bad" : ""}" data-go="${a.h}"><span class="${a.bad ? "bad" : "warn"}">${I.warn}</span><span style="flex:1;min-width:0"><span class="a1">${esc(a.t)}</span><span class="a2 num">${esc(a.s)}</span></span></button>`).join("")
-      : `<div class="card empty" style="padding:16px">Всё в порядке</div>`}
-    ${alerts.length > 6 ? `<button class="btn sec" data-act="alerts">${showAllAlerts ? "Свернуть" : "Показать все (" + alerts.length + ")"}</button>` : ""}
+    <div class="h2">Требует внимания${total ? " · " + total : ""}</div>
+    ${att || `<div class="card empty" style="padding:16px">Всё в порядке</div>`}
     <div class="note">Мешки: предупреждение, если хватит меньше чем на ${SET.porog} дней (меняется в «Ещё → Настройки»).</div>`
   };
 }
@@ -592,14 +613,15 @@ function toast(t) {
 
 /* ───────── события ───────── */
 document.addEventListener("click", async (e) => {
-  const b = e.target.closest("[data-go],[data-act],[data-theme],[data-porog]");
+  const b = e.target.closest("[data-go],[data-act],[data-theme],[data-porog],[data-grp]");
   if (!b) return;
+  if (b.dataset.grp) { const g = b.dataset.grp; if (openGroups.has(g)) openGroups.delete(g); else openGroups.add(g); render(true); return; }
   if (b.dataset.go) { go(b.dataset.go); return; }
   if (b.dataset.theme) { SET.theme = b.dataset.theme; lsSet(LS_SET, SET); applyTheme(); render(); return; }
   if (b.dataset.porog) { SET.porog = +b.dataset.porog; lsSet(LS_SET, SET); render(); return; }
   const a = b.dataset.act;
   if (a === "theme") { SET.theme = isDark() ? "light" : "dark"; lsSet(LS_SET, SET); applyTheme(); render(); }
-  else if (a === "alerts") { showAllAlerts = !showAllAlerts; render(); }
+
   else if (a === "clearq") { Q = ""; rerenderKeepFocus(); }
   else if (a === "back") { if (history.length > 1) history.back(); else go("#home"); }
   else if (a === "pick") { document.getElementById("file").click(); }
