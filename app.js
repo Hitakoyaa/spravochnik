@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.1";
+const APP_VERSION = "1.2";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -205,9 +205,10 @@ function viewHome() {
   ];
   const alerts = [];
   (DATA.ostatki.vnimanie || []).slice().sort((x, y) => {
-    const px = byKey(products(), x.key), py = byKey(products(), y.key);
-    return (px ? px.svobodno_kg : 0) - (py ? py.svobodno_kg : 0);
+    const sv = (z) => { const p = byKey(products(), z.key); return p ? p.svobodno_kg : (z.svobodno_kg || 0); };
+    return sv(x) - sv(y);
   }).forEach((a) => {
+    if (a.tip === "syrie") { alerts.push({ t: a.name + " — сырьё", s: `не хватает ${T(-a.svobodno_kg)} т под комбикорм для хозяйств`, h: "#razn/kombi", bad: true }); return; }
     const p = byKey(products(), a.key);
     alerts.push({ t: p ? p.name : a.text, s: p ? `не хватает ${T(-p.svobodno_kg)} т под разнарядки` : "", h: "#item/" + encodeURIComponent(a.key), bad: true });
   });
@@ -399,11 +400,32 @@ function viewRazn(f) {
     <div class="grid3 num" style="font-size:12px"><span>${f === "kombi" ? "Потребность" : "Всего"}<br><b>${T(tot)} т</b></span><span>Отгружено<br><b>${T(done)} т</b></span><span>Остаток<br><b>${T(rest)} т</b></span></div></div>`;
   if (f === "kombi") {
     const kv = DATA.razn.kombikorm_kvota;
-    const body = (kv && kv.pozicii ? kvotaCard(kv) : "") + `<div class="h2">По хозяйствам</div>` + list.map(rznRow).join("") + (list.length ? "" : `<div class="empty">Ничего не найдено</div>`);
+    const body = (kv && kv.pozicii ? kvotaCard(kv) : "") + syrieCard(DATA.razn.kombikorm_syrie) + `<div class="h2">По хозяйствам</div>` + list.map(rznRow).join("") + (list.length ? "" : `<div class="empty">Ничего не найдено</div>`);
     return { top: header("Разнарядки", "Хозяйство или вид комбикорма"), main: chips + sum + body };
   }
   const note = f === "done" && !list.length && !Q ? `<div class="empty">Выполненных нет. Строка попадает сюда, если в листе «Все» она осталась с остатком 0.</div>` : (!list.length ? `<div class="empty">Ничего не найдено</div>` : "");
   return { top: header("Разнарядки", "Покупатель, продукция, номер"), main: chips + sum + list.map(rznRow).join("") + note };
+}
+
+function syrieCard(sy) {
+  if (!sy || Q) return "";
+  const pr = sy.proizvesti.filter((x) => x.proizvesti_kg > 0);
+  const need = sy.komponenty.filter((z) => z.nuzhno_kg > 0);
+  const other = sy.komponenty.filter((z) => z.nuzhno_kg <= 0 && z.ostatok_kg > 0);
+  const lack = need.filter((z) => z.raznica_kg < 0).length;
+  let h = `<div class="h2">Произвести ещё (к отгрузке − на складе)</div><div class="card kv">` +
+    (pr.length ? pr.map((x) => `<div><span>${esc(x.name)}${x.est_recept ? "" : ' <span class="warn">· нет рецепта</span>'}</span><b class="num">${T(x.proizvesti_kg)} т</b></div>`).join("") : `<div><span>Всё есть на складе</span><b></b></div>`) + `</div>`;
+  h += `<div class="h2">Сырьё под потребность${lack ? ` · не хватает ${lack}` : ""}</div>`;
+  h += need.map((z) => {
+    const bad = z.raznica_kg < 0;
+    return `<div class="row" style="align-items:flex-start">
+      <span class="m"><span class="n">${esc(z.name)}</span><span class="d num">нужно ${T(z.nuzhno_kg)} т · на складе ${T(z.ostatok_kg)} т</span>${z.dlya.length ? `<span class="d">${esc(z.dlya.join(", "))}</span>` : ""}</span>
+      <span class="r"><span class="badge ${bad ? "b-bad" : "b-ok"} num">${bad ? "не хватает " + T(-z.raznica_kg) : "излишек " + T(z.raznica_kg)} т</span></span></div>`;
+  }).join("");
+  if (other.length) h += `<div class="h2">Сырьё на складе, не нужное под текущую потребность</div><div class="card kv">` +
+    other.map((z) => `<div><span>${esc(z.name)}</span><b class="num">${T(z.ostatok_kg)} т</b></div>`).join("") + `</div>`;
+  h += `<div class="note">Нужно = (потребность хозяйств − отгружено − готовый комбикорм на складе) × норма рецепта, без потерь. Рецепты — файл «Рецепты_комбикорма» в папке на ПК.</div>`;
+  return h;
 }
 
 function kvotaCard(kv) {
