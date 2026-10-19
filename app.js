@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.0.1";
+const APP_VERSION = "1.1";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -122,6 +122,7 @@ const CHIPS = [{ id: "all", label: "Все" }, ...GROUPS, { id: "zerno", label: 
 
 function products() { return DATA ? DATA.ostatki.pozicii : []; }
 function razn() { return DATA ? DATA.razn.stroki : []; }
+function isK(x) { return x.tip === "kombikorm"; }
 function tara() { return DATA ? DATA.meshki.pozicii : []; }
 function zerno() { return DATA ? DATA.zerno.kultury : []; }
 function byKey(list, key) { return list.find((x) => x.key === key); }
@@ -193,7 +194,7 @@ function viewHome() {
   if (!DATA) return { top: header("Справочник экономиста", "Поиск по всем данным"), main: noData() };
   if (Q) return { top: header("Поиск по всем данным", "Поиск по всем данным"), main: globalSearch() };
   const muka = products().filter((p) => p.gruppa === "Мука").reduce((s, p) => s + p.ostatok_kg, 0);
-  const act = razn().filter((x) => x.status === "aktivnaya");
+  const act = razn().filter((x) => x.status === "aktivnaya" && !isK(x));
   const toShip = act.reduce((s, x) => s + x.ostatok_kg, 0);
   const korm = products().filter((p) => p.gruppa === "Кормовая мука и отруби").reduce((s, p) => s + p.ostatok_kg, 0);
   const tiles = [
@@ -232,7 +233,7 @@ function globalSearch() {
     if (match(Q, z.kultura)) res.push({ ty: "Зерно", t: z.kultura, s: T(z.ostatok_kg) + " т", h: "#zerno/" + encodeURIComponent(z.key) });
     z.po_firmam.forEach((f) => match(Q, f.firma, z.kultura) && !match(Q, z.kultura) && res.push({ ty: "Зерно · фирма", t: f.firma, s: `${z.kultura}: ${T(f.ostatok_kg)} т`, h: "#zerno/" + encodeURIComponent(z.key) }));
   });
-  razn().forEach((x) => match(Q, x.pokupatel, x.produkt_name, x.nomer) && res.push({ ty: "Разнарядка" + (x.nomer ? " № " + x.nomer : ""), t: x.pokupatel, s: `${x.produkt_name} · остаток ${T(x.ostatok_kg)} т`, h: "#rz/" + encodeURIComponent(x.key) }));
+  razn().forEach((x) => match(Q, x.pokupatel, x.produkt_name, x.nomer) && res.push({ ty: isK(x) ? "Комбикорм · хозяйство ТНК" : "Разнарядка" + (x.nomer ? " № " + x.nomer : ""), t: x.pokupatel, s: `${x.produkt_name} · остаток ${T(x.ostatok_kg)} т`, h: "#rz/" + encodeURIComponent(x.key) }));
   tara().forEach((m) => match(Q, m.name, m.mesto, (m.dlya || []).join(" ")) && res.push({ ty: "Мешкотара · " + m.mesto, t: m.name, s: `${N(m.ostatok)} ${m.ed}` + (m.hvatit_dney != null ? " · " + daysTxt(m.hvatit_dney) : ""), h: "#tara/" + encodeURIComponent(m.key) }));
   return `<div class="note" style="font-weight:700">Найдено: ${res.length}</div>` + (res.length ? res.slice(0, 80).map(resRow).join("") : `<div class="empty">Ничего не найдено</div>`);
 }
@@ -322,16 +323,17 @@ function viewItem(key) {
   const rz = razn().filter((x) => x.produkt === key && x.status === "aktivnaya");
   const bags = tara().filter((m) => (m.dlya || []).includes(p.name));
   const fcls = p.svobodno_kg < 0 ? "bad" : "ok";
+  const kb = p.gruppa === "Комбикорм";
   let main = `<div class="card big"><span class="l">Остаток всего</span><span class="v num">${W(p.ostatok_kg)}</span>
       ${p.ostatok_kg >= 67800 ? `<span class="note" style="padding:0">≈ ${nf1.format(p.ostatok_kg / 67800)} ваг. по 67,8 т</span>` : ""}</div>
     <div class="card kv">
       ${Object.entries(p.po_mestam || {}).map(([k, v]) => `<div><span>${esc(k)}</span><b class="num">${W(v)}</b></div>`).join("")}
-      <div><span>Резерв под разнарядки</span><b class="num">${W(p.rezerv_kg)}</b></div>
-      <div><span>${p.svobodno_kg < 0 ? "Не хватает (надо вытарить)" : "Свободный остаток"}</span><b class="num ${fcls}">${W(Math.abs(p.svobodno_kg))}</b></div>
+      <div><span>${kb ? "Под потребность хозяйств" : "Резерв под разнарядки"}</span><b class="num">${W(p.rezerv_kg)}</b></div>
+      <div><span>${p.svobodno_kg < 0 ? (kb ? "Не хватает (надо произвести)" : "Не хватает (надо вытарить)") : "Свободный остаток"}</span><b class="num ${fcls}">${W(Math.abs(p.svobodno_kg))}</b></div>
       ${p.fasovka_kg ? `<div><span>Фасовка</span><b class="num">${nf1.format(p.fasovka_kg).replace(",0", "")} кг</b></div>` : ""}
       <div><span>Группа</span><b>${esc(p.gruppa)}</b></div>
     </div>`;
-  if (rz.length) main += `<div class="h2">Активные разнарядки · ${rz.length}</div>` + rz.map(rznRow).join("");
+  if (rz.length) main += `<div class="h2">${rz.every(isK) ? "Потребность хозяйств ТНК" : "Активные разнарядки"} · ${rz.length}</div>` + rz.map(rznRow).join("");
   if (bags.length) main += `<div class="h2">Мешкотара и этикетки</div>` + bags.map(taraRow).join("");
   return { top: backbar(p.gruppa, p.name), main };
 }
@@ -369,13 +371,17 @@ function viewTara(key) {
   return { top: backbar("Мешкотара · " + m.mesto, m.name), main };
 }
 
-const RZF = [{ id: "active", label: "Активные" }, { id: "done", label: "Выполненные" }, { id: "all", label: "Все" }];
+const RZF = [{ id: "active", label: "Активные" }, { id: "done", label: "Выполненные" }, { id: "all", label: "Все" }, { id: "kombi", label: "Комбикорм ТНК" }];
 function rznRow(x) {
-  const st = x.status === "aktivnaya" ? `<span class="badge b-info">активная</span>` : `<span class="badge b-ok">выполнена</span>`;
+  const k = isK(x);
+  const st = x.status === "aktivnaya" ? `<span class="badge b-info">${k ? "к отгрузке" : "активная"}</span>` : `<span class="badge b-ok">${k ? "отгружено" : "выполнена"}</span>`;
+  const head = k ? `<span class="badge b-mute">${esc((x.pometka || "потребность").replace(/^Потребность/i, "потребность"))}</span>`
+    : `<span class="num" style="font-size:12px;font-weight:800;color:var(--muted)">${x.nomer ? "№ " + esc(x.nomer) : "без номера"}</span>`;
+  const right = !k && x.vagonov != null ? `<span class="num" style="margin-left:auto;font-size:12px;color:var(--muted)">${nf1.format(x.vagonov)} ваг.</span>` : "";
   return `<button class="row" data-go="#rz/${encodeURIComponent(x.key)}" style="flex-direction:column;align-items:stretch;gap:8px;padding:14px">
-    <span style="display:flex;gap:8px;align-items:center"><span class="num" style="font-size:12px;font-weight:800;color:var(--muted)">${x.nomer ? "№ " + esc(x.nomer) : "без номера"}</span>${st}${x.pometka ? `<span class="badge b-warn">${esc(x.pometka)}</span>` : ""}<span class="num" style="margin-left:auto;font-size:12px;color:var(--muted)">${nf1.format(x.vagonov)} ваг.</span></span>
+    <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${head}${st}${!k && x.pometka ? `<span class="badge b-warn">${esc(x.pometka)}</span>` : ""}${right}</span>
     <span><span class="n" style="font-size:15px">${esc(x.pokupatel)}</span><span class="d">${esc(x.produkt_name)}</span></span>
-    <span class="grid3 num"><span>Всего<br><b>${T(x.obem_kg)}</b></span><span>Отгружено<br><b>${T(x.otgruzheno_kg)}</b></span><span>Остаток<br><b>${T(x.ostatok_kg)}</b></span></span>
+    <span class="grid3 num"><span>${k ? "Потребность" : "Всего"}<br><b>${T(x.obem_kg)}</b></span><span>Отгружено<br><b>${T(x.otgruzheno_kg)}</b></span><span>Остаток<br><b>${T(x.ostatok_kg)}</b></span></span>
     <span class="bar"><i style="width:${Math.min(100, x.procent)}%"></i></span>
     <span class="num" style="font-size:12px;color:var(--muted)">отгружено ${nf1.format(x.procent)}% · тонны</span></button>`;
 }
@@ -383,16 +389,32 @@ function rznRow(x) {
 function viewRazn(f) {
   if (!DATA) return { top: header("Разнарядки", "Покупатель, продукция, номер"), main: noData() };
   f = RZF.find((z) => z.id === f) ? f : "active";
-  const list = razn().filter((x) => (f === "all" || (f === "active" ? x.status === "aktivnaya" : x.status === "vypolnena")) && match(Q, x.pokupatel, x.produkt_name, x.nomer, x.pometka));
+  const list = razn().filter((x) => (f === "kombi" ? isK(x) : !isK(x) && (f === "all" || (f === "active" ? x.status === "aktivnaya" : x.status === "vypolnena"))) && match(Q, x.pokupatel, x.produkt_name, x.nomer, x.pometka));
   const tot = list.reduce((s, x) => s + x.obem_kg, 0), done = list.reduce((s, x) => s + x.otgruzheno_kg, 0), rest = list.reduce((s, x) => s + x.ostatok_kg, 0);
   const pct = tot ? done / tot * 100 : 0;
-  const chips = `<div style="display:flex;gap:8px">${RZF.map((c) => `<button class="chip ${c.id === f ? "on" : ""}" data-go="#razn/${c.id}">${c.label}</button>`).join("")}</div>`;
+  const chips = `<div class="chips scroll">${RZF.map((c) => `<button class="chip ${c.id === f ? "on" : ""}" data-go="#razn/${c.id}">${c.label}</button>`).join("")}</div>`;
   const sum = `<div style="padding:14px 16px;border-radius:18px;background:var(--accentSoft);display:flex;flex-direction:column;gap:8px">
     <div style="display:flex;justify-content:space-between;font-weight:800;color:var(--accent)"><span>${list.length} ${plural(list.length, "строка", "строки", "строк")}</span><span class="num">${nf1.format(pct)}%</span></div>
     <div class="bar" style="background:var(--surface)"><i style="width:${Math.min(100, pct)}%"></i></div>
-    <div class="grid3 num" style="font-size:12px"><span>Всего<br><b>${T(tot)} т</b></span><span>Отгружено<br><b>${T(done)} т</b></span><span>Остаток<br><b>${T(rest)} т</b></span></div></div>`;
+    <div class="grid3 num" style="font-size:12px"><span>${f === "kombi" ? "Потребность" : "Всего"}<br><b>${T(tot)} т</b></span><span>Отгружено<br><b>${T(done)} т</b></span><span>Остаток<br><b>${T(rest)} т</b></span></div></div>`;
+  if (f === "kombi") {
+    const kv = DATA.razn.kombikorm_kvota;
+    const body = (kv && kv.pozicii ? kvotaCard(kv) : "") + `<div class="h2">По хозяйствам</div>` + list.map(rznRow).join("") + (list.length ? "" : `<div class="empty">Ничего не найдено</div>`);
+    return { top: header("Разнарядки", "Хозяйство или вид комбикорма"), main: chips + sum + body };
+  }
   const note = f === "done" && !list.length && !Q ? `<div class="empty">Выполненных нет. Строка попадает сюда, если в листе «Все» она осталась с остатком 0.</div>` : (!list.length ? `<div class="empty">Ничего не найдено</div>` : "");
   return { top: header("Разнарядки", "Покупатель, продукция, номер"), main: chips + sum + list.map(rznRow).join("") + note };
+}
+
+function kvotaCard(kv) {
+  const rows = kv.pozicii.filter((q) => q.zayavleno || q.proizvedeno || q.zayavleno_god || q.proizvedeno_god);
+  if (!rows.length) return "";
+  const pc = (a, b) => (b ? nf0.format(a / b * 100) + "%" : "—");
+  return `<div class="h2">${esc(kv.period || "Квота комбикорма")}</div>
+    <div class="card kv">${rows.map((q) => `<div style="flex-direction:column;gap:2px;${q.itogo ? "font-weight:800" : ""}">
+      <span style="color:var(--text);font-weight:${q.itogo ? 800 : 700}">${esc(q.name)}</span>
+      <span class="num" style="display:flex;justify-content:space-between;gap:8px"><span>заявлено ${T(q.zayavleno)} т · произведено ${T(q.proizvedeno)} т</span><b>${pc(q.proizvedeno, q.zayavleno)}</b></span>
+      ${q.zayavleno_god ? `<span class="num" style="font-size:12px">с начала года: ${T(q.proizvedeno_god)} из ${T(q.zayavleno_god)} т (${pc(q.proizvedeno_god, q.zayavleno_god)})</span>` : ""}</div>`).join("")}</div>`;
 }
 
 function viewRz(key) {
@@ -400,18 +422,18 @@ function viewRz(key) {
   if (!x) return { top: backbar("Разнарядка", ""), main: `<div class="empty">Нет в текущих данных</div>` };
   const p = byKey(products(), x.produkt);
   const main = `<div style="padding:14px 16px;border-radius:18px;background:var(--accentSoft);display:flex;flex-direction:column;gap:8px">
-      <div style="display:flex;justify-content:space-between;font-weight:800;color:var(--accent)"><span>${x.status === "aktivnaya" ? "Активная" : "Выполнена"}</span><span class="num">${nf1.format(x.procent)}%</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:800;color:var(--accent)"><span>${x.status === "aktivnaya" ? (isK(x) ? "К отгрузке" : "Активная") : (isK(x) ? "Отгружено полностью" : "Выполнена")}</span><span class="num">${nf1.format(x.procent)}%</span></div>
       <div class="bar" style="background:var(--surface)"><i style="width:${Math.min(100, x.procent)}%"></i></div>
-      <div class="grid3 num" style="font-size:12px"><span>Всего<br><b>${T(x.obem_kg)} т</b></span><span>Отгружено<br><b>${T(x.otgruzheno_kg)} т</b></span><span>Остаток<br><b>${T(x.ostatok_kg)} т</b></span></div></div>
+      <div class="grid3 num" style="font-size:12px"><span>${isK(x) ? "Потребность" : "Всего"}<br><b>${T(x.obem_kg)} т</b></span><span>Отгружено<br><b>${T(x.otgruzheno_kg)} т</b></span><span>Остаток<br><b>${T(x.ostatok_kg)} т</b></span></div></div>
     <div class="card kv">
-      <div><span>Номер</span><b>${x.nomer ? esc(x.nomer) : "без номера"}</b></div>
-      <div><span>Покупатель</span><b>${esc(x.pokupatel)}</b></div>
+      ${isK(x) ? "" : `<div><span>Номер</span><b>${x.nomer ? esc(x.nomer) : "без номера"}</b></div>`}
+      <div><span>${isK(x) ? "Хозяйство ТНК" : "Покупатель"}</span><b>${esc(x.pokupatel)}</b></div>
       <div><span>Продукция</span><b>${esc(x.produkt_name)}</b></div>
-      <div><span>Остаток, вагонов</span><b class="num">${nf1.format(x.vagonov)}</b></div>
-      ${x.pometka ? `<div><span>Пометка</span><b class="warn">${esc(x.pometka)}</b></div>` : ""}
+      ${x.vagonov != null ? `<div><span>Остаток, вагонов</span><b class="num">${nf1.format(x.vagonov)}</b></div>` : ""}
+      ${x.pometka ? `<div><span>${isK(x) ? "Период" : "Пометка"}</span><b class="${isK(x) ? "" : "warn"}">${esc(x.pometka)}</b></div>` : ""}
     </div>
     ${p ? `<div class="h2">Остаток продукции</div>` + prodRow(p) : ""}`;
-  return { top: backbar("Разнарядка" + (x.nomer ? " № " + x.nomer : ""), x.pokupatel), main };
+  return { top: backbar(isK(x) ? "Комбикорм · хозяйство ТНК" : "Разнарядка" + (x.nomer ? " № " + x.nomer : ""), x.pokupatel), main };
 }
 
 function viewSoon(title, stage, what) {
