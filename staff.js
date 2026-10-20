@@ -368,7 +368,7 @@ function vacOf(name) {
 }
 function shortFio(f) { const w = String(f || "").split(/\s+/); return w[0] + (w[1] ? " " + w[1][0] + "." : "") + (w[2] ? w[2][0] + "." : ""); }
 function whoTxt(x) {
-  const a = (x.kto || []).map((k) => shortFio(k.f) + (k.s ? " (совм.)" : ""));
+  const a = (x.kto || []).map((k) => shortFio(k.f) + (k.d ? " (та же ед., что «" + (x.dubl || "вверху") + "»)" : k.s ? " (совм.)" : ""));
   const d = (x.kto_dekret || []).map((k) => shortFio(k.f) + " (декрет)");
   const all = a.concat(d);
   return all.length ? `<span class="d who">${esc(all.join(", "))}</span>` : "";
