@@ -258,6 +258,7 @@ function viewEmp(b) {
     <div><span>Должность</span><b>${esc(s.dolzh)}</b></div>
     <div><span>Подразделение</span><b><button data-go="#dep/${encodeURIComponent(s.podr)}" class="ok" style="font-weight:800">${esc(s.podr)}</button></b></div>
     ${s.tab.startsWith("f:") ? "" : `<div><span>Табельный №</span><b class="num">${esc(s.tab.replace(/^0+/, ""))}</b></div>`}
+    ${s.tab_old ? `<div><span>Прежний таб. №</span><b class="num">${esc(s.tab_old.map((t) => t.replace(/^0+/, "")).join(", "))} · повторный приём</b></div>` : ""}
     ${s.priem ? `<div><span>Принят</span><b class="num">${esc(s.priem)}</b></div>` : ""}
     ${s.oplata ? `<div><span>Оплата</span><b>${esc(s.oplata)}</b></div>` : ""}
     ${s.sovm ? `<div><span>Совмещение</span><b>${esc(s.sovm.dolzh)} · ${esc(s.sovm.podr)}</b></div>` : ""}
