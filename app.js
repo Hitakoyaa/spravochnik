@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.5.1";
+const APP_VERSION = "1.5.2";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -565,7 +565,7 @@ function viewSettings() {
   const pr = [7, 10, 15, 20, 30];
   return {
     top: backbar("Ещё", "Настройки"),
-    main: `<div class="h2">Тема</div><div class="seg">${th.map(([k, l]) => `<button class="${SET.theme === k ? "on" : ""}" data-theme="${k}">${l}</button>`).join("")}</div>
+    main: `<div class="h2">Тема</div><div class="seg">${th.map(([k, l]) => `<button class="${SET.theme === k ? "on" : ""}" data-settheme="${k}">${l}</button>`).join("")}</div>
       <div class="h2">Мешкотара: предупреждать, если хватит меньше чем на</div>
       <div class="seg">${pr.map((p) => `<button class="num ${SET.porog === p ? "on" : ""}" data-porog="${p}">${p} дн.</button>`).join("")}</div>
       <div class="h2">Память</div>
@@ -622,11 +622,11 @@ function toast(t) {
 
 /* ───────── события ───────── */
 document.addEventListener("click", async (e) => {
-  const b = e.target.closest("[data-go],[data-act],[data-theme],[data-porog],[data-grp]");
+  const b = e.target.closest("[data-go],[data-act],[data-settheme],[data-porog],[data-grp]");
   if (!b) return;
   if (b.dataset.grp) { const g = b.dataset.grp; if (openGroups.has(g)) openGroups.delete(g); else openGroups.add(g); render(true); return; }
   if (b.dataset.go) { go(b.dataset.go); return; }
-  if (b.dataset.theme) { SET.theme = b.dataset.theme; lsSet(LS_SET, SET); applyTheme(); render(); return; }
+  if (b.dataset.settheme) { SET.theme = b.dataset.settheme; lsSet(LS_SET, SET); applyTheme(); render(); return; }
   if (b.dataset.porog) { SET.porog = +b.dataset.porog; lsSet(LS_SET, SET); render(); return; }
   const a = b.dataset.act;
   if (a === "theme") { SET.theme = isDark() ? "light" : "dark"; lsSet(LS_SET, SET); applyTheme(); render(); }
