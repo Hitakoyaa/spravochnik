@@ -1,5 +1,5 @@
 // Офлайн-работа: всё приложение лежит в кэше телефона. Данные — отдельно, в памяти браузера.
-const VERSION = "spr-v1.6.2";
+const VERSION = "spr-v1.6.3";
 const FILES = [
   "./", "./index.html", "./app.js", "./staff.js", "./manifest.webmanifest",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/maskable-512.png", "./icons/apple-180.png",

@@ -366,17 +366,25 @@ function vacOf(name) {
   if (!sh) return [];
   return sh.okladniki.concat(sh.sdelshiki).filter((x) => x.vakant > 0 && x.podr1c && podrKey(x.podr1c) === podrKey(name));
 }
+function shortFio(f) { const w = String(f || "").split(/\s+/); return w[0] + (w[1] ? " " + w[1][0] + "." : "") + (w[2] ? w[2][0] + "." : ""); }
+function whoTxt(x) {
+  const a = (x.kto || []).map((k) => shortFio(k.f) + (k.s ? " (совм.)" : ""));
+  const d = (x.kto_dekret || []).map((k) => shortFio(k.f) + " (декрет)");
+  const all = a.concat(d);
+  return all.length ? `<span class="d who">${esc(all.join(", "))}</span>` : "";
+}
 function occTxt(x) {
   const held = x.ed - x.vakant;
   let t = "занято " + nf0.format(held) + " из " + nf0.format(x.ed);
   if (x.dekret) t += " · в декрете " + x.dekret + (x.zamesh ? ", замещают " + x.zamesh : ", не замещают");
+  if (x.sovm) t += " · совмещение " + x.sovm;
   return t;
 }
 function payTxt(x) { return money(x.oklad) + (x.doplata ? " + " + money(x.doplata) + " премия/KPI" : ""); }
 function vacRow(x) {
   const per = x.oklad + (x.doplata || 0);
   return `<div class="shr"><span class="m"><span class="n2">${esc(x.dolzh)}${x.v_tabele ? ` <span class="badge b-info">ищут</span>` : ""}</span>
-    <span class="d num">${x.doplata ? payTxt(x) + " = " : ""}${money(per)} ₸ на ед. · ${occTxt(x)}</span></span>
+    <span class="d num">${x.doplata ? payTxt(x) + " = " : ""}${money(per)} ₸ на ед. · ${occTxt(x)}</span>${whoTxt(x)}</span>
     <span class="r2"><span class="num rv2 bad">${nf0.format(x.vakant)} ед.</span><span class="d num">${money(per * x.vakant)} ₸</span></span></div>`;
 }
 function SH() { return P() && P().shtat ? P().shtat : null; }
@@ -405,7 +413,7 @@ function viewShtat(b) {
     body = [...groupBy(list).entries()].map(([k, l]) => {
       const sub = tab === "okl" && l[0].blok !== k ? l[0].blok + " · " : "";
       return `<div class="card shg"><div class="shh"><span class="m"><span class="n">${esc(k)}</span><span class="d num">${esc(sub)}${edTxt(sum(l, "ed"))}, занято ${nf0.format(sum(l, "ed") - sum(l, "vakant"))} · ${money(sum(l, "mes"))} ₸/мес</span></span></div>
-        ${l.map((x) => `<div class="shr"><span class="m"><span class="n2">${esc(x.dolzh)}</span><span class="d num">${x.ed > 1 ? edTxt(x.ed) + " × " : ""}${payTxt(x)}</span></span>
+        ${l.map((x) => `<div class="shr"><span class="m"><span class="n2">${esc(x.dolzh)}</span><span class="d num">${x.ed > 1 ? edTxt(x.ed) + " × " : ""}${payTxt(x)}</span>${whoTxt(x)}</span>
           <span class="r2"><span class="num rv2">${money(x.mes)}</span><span class="d num ${x.vakant > 0 ? "bad" : x.vremenno ? "warn" : "ok"}">${x.vakant > 0 ? "свободно " + nf0.format(x.vakant) : x.vremenno ? "в декрете, не замещают" : "занято"}</span>${x.dekret && x.zamesh ? `<span class="d" style="color:var(--muted)">декрет · замещают</span>` : ""}</span></div>`).join("")}
       </div>`;
     }).join("") || `<div class="empty">Ничего не найдено</div>`;
@@ -423,8 +431,10 @@ function viewShtat(b) {
     if (vr.length) body += `<div class="h2">Временно не работает никто · ${nf0.format(sum(vr, "vremenno"))} ед.</div><div class="card shg">${vr.map((x) => `<div class="shr"><span class="m"><span class="n2">${esc(x.dolzh)}</span><span class="d">${esc(grpOf(x))} · сотрудник в декрете / по уходу за ребёнком, место за ним</span></span><span class="r2"><span class="num rv2 warn">${nf0.format(x.vremenno)} ед.</span><span class="d num">${money(x.oklad + (x.doplata || 0))} ₸</span></span></div>`).join("")}</div>`;
     const tl = sh.tabel_lishnie || [], sv = sh.sverh_shtata || [];
     if (tl.length) body += `<div class="h2">В табеле — вакансия, а по 1С занято</div><div class="card kv">${tl.map((v) => `<div><span>${esc(v.dolzh)}</span><b>${esc(v.podr)}</b></div>`).join("")}</div><div class="note">Эти строки «ВАКАНСИЯ» в табеле, вероятно, устарели — должность уже занята (или её нет в штатке).</div>`;
-    if (sv.length) body += `<div class="h2">Работают сверх штата</div><div class="card kv">${sv.map((v) => `<div><span>${esc(v.fio)}</span><b>${esc(v.dolzh)}</b></div>`).join("")}</div>`;
-    body += `<div class="note">Свободно = ед. по штатке − работающие − сотрудники в декрете/по уходу за ребёнком (место за ними сохраняется; кто работает на их месте — «замещают», это не сверх штата). «Ищут» — по должности есть строка «ВАКАНСИЯ» в табеле. Сумма — оклад + премия/KPI на свободные ед. в месяц.</div>`;
+    const svM = sv.filter((v) => !v.sovm), svS = sv.filter((v) => v.sovm);
+    if (svM.length) body += `<div class="h2">Работают сверх штата / нет в штатке</div><div class="card kv">${svM.map((v) => `<div><span>${esc(shortFio(v.fio))}</span><b>${esc(v.dolzh)} · ${esc(v.podr)}</b></div>`).join("")}</div>`;
+    if (svS.length) body += `<div class="h2">Совмещения, для которых нет свободной ед.</div><div class="card kv">${svS.map((v) => `<div><span>${esc(shortFio(v.fio))}</span><b>${esc(v.dolzh)} · ${esc(v.podr)}</b></div>`).join("")}</div><div class="note">По табелю человек совмещает, но все ед. этой должности уже заняты основными работниками (или совмещают несколько человек на одной ед.).</div>`;
+    body += `<div class="note">Свободно = ед. по штатке − работающие (в т. ч. по совмещению из табеля и файла «Совмещения») − сотрудники в декрете/по уходу за ребёнком (место за ними сохраняется; кто работает на их месте — «замещают»). «Ищут» — по должности есть строка «ВАКАНСИЯ» в табеле. Сумма — оклад + премия/KPI на свободные ед. в месяц.</div>`;
   }
   return { top: top(tab === "okl" ? "Окладники" : tab === "sdel" ? "Сдельщики" : "Вакансии") + `<div style="padding:0 16px 8px">${srch}</div>`, main: head + seg + body };
 }
