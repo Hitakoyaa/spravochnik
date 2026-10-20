@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.6.1";
+const APP_VERSION = "1.6.2";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
