@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.8";
+const APP_VERSION = "1.8.1";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -531,6 +531,13 @@ function viewMore() {
   };
 }
 
+function envTxt() {
+  const ua = navigator.userAgent;
+  const br = /SamsungBrowser/.test(ua) ? "Samsung Internet" : /EdgA|YaBrowser|OPR|Firefox/.test(ua) ? "другой браузер" : /Chrome\//.test(ua) ? "Chrome" : "другой браузер";
+  let st = "во вкладке браузера";
+  try { if (matchMedia("(display-mode: standalone)").matches) st = "как установленное приложение"; } catch (e) { /* */ }
+  return br + " · " + st;
+}
 function viewLoad() {
   return {
     top: backbar("Ещё", "Загрузить данные"),
@@ -546,7 +553,8 @@ function viewLoad() {
       <div><span>3. Telegram на телефоне</span><b>файл от бота → ⋮ → «Поделиться» → «Справочник»</b></div>
       <div><span>Или вручную</span><b>«Выбрать архив» → Загрузки → Telegram</b></div>
     </div>
-    <div class="note">Данные хранятся только в этом телефоне и в интернет не отправляются.</div>`
+    <div class="note">Данные хранятся только в этом телефоне и в интернет не отправляются.</div>
+    <div class="note">Открыто: ${esc(envTxt())} · версия ${APP_VERSION}</div>`
   };
 }
 
