@@ -1,0 +1,359 @@
+/* Справочник экономиста — раздел «Персонал» (этап 4): сотрудники, табель, приказы, зарплата под PIN. */
+"use strict";
+
+const MON = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+const MON_S = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+const ABS = { "о": ["Отпуск", "b-info"], "б/л": ["Больничный", "b-bad"], "б/с": ["Без сохранения", "b-warn"], "д/о": ["Декрет", "b-mute"], "у/р": ["Уход за ребёнком", "b-mute"], "н": ["Отсутствие", "b-bad"] };
+const ZPK = [["ok", "Оклад"], ["ch", "Почасовая оплата"], ["sd", "Сдельная"], ["dp", "Доплата за совмещение"], ["pr", "Премии"], ["no", "Ночные"], ["ot", "Отпускные"], ["bl", "Больничные"], ["ko", "Компенсация за отпуск (при увольнении)"], ["pc", "Прочее"]];
+const LOCK_MS = 5 * 60 * 1000;
+
+let ZP = null;            // расшифрованная зарплата — только в памяти, пока открыто
+let zpTimer = null;
+let staffChip = "all";
+const PER = { t: { k: "m" }, z: { k: "y" }, d: { k: "m" } };
+
+function P() { return DATA && DATA.pers ? DATA.pers : null; }
+function people() { return P() && P().personal ? P().personal.sotrudniki : []; }
+function emp(tab) { return people().find((x) => x.tab === tab); }
+function mLabel(k, short) { const [y, m] = k.split("-"); return (short ? MON_S : MON)[+m - 1] + " " + (short ? y.slice(2) : y); }
+function money(x) { return nf0.format(Math.round(x || 0)); }
+function stBadge(s) {
+  if (!s) return "";
+  if (s.uvolen) return `<span class="badge b-mute">Уволен</span>`;
+  const st = s.status;
+  if (!st) return "";
+  if (st.kod === "у") return `<span class="badge b-mute">Уволен</span>`;
+  const a = ABS[st.kod];
+  return a ? `<span class="badge ${a[1]}">${a[0]}</span>` : "";
+}
+function isAbsent(s) { return !s.uvolen && s.status && ABS[s.status.kod]; }
+
+/* ───── период ───── */
+function quarterOf(k) { return k.slice(0, 4) + "-Q" + Math.ceil(+k.slice(5) / 3); }
+function resolvePer(st, months) {
+  if (!months.length) return [];
+  const last = months[months.length - 1];
+  if (st.k === "m") return [months.includes(st.m) ? st.m : last];
+  if (st.k === "q") { const q = st.q || quarterOf(last); return months.filter((m) => quarterOf(m) === q); }
+  if (st.k === "y") { const y = last.slice(0, 4); return months.filter((m) => m.startsWith(y)); }
+  const a = st.a && months.includes(st.a) ? st.a : months[0], b = st.b && months.includes(st.b) ? st.b : last;
+  return months.filter((m) => m >= (a < b ? a : b) && m <= (a < b ? b : a));
+}
+function perPicker(id, months) {
+  const st = PER[id];
+  const sel = resolvePer(st, months);
+  const kinds = [["m", "Месяц"], ["q", "Квартал"], ["y", "С начала года"], ["c", "Свой"]];
+  let h = `<div class="seg">${kinds.map(([k, l]) => `<button class="${st.k === k ? "on" : ""}" data-per="${id}:k:${k}">${l}</button>`).join("")}</div>`;
+  if (st.k === "m") {
+    const cur = sel[0];
+    h += `<div class="chips scroll">${months.slice().reverse().map((m) => `<button class="chip ${m === cur ? "on" : ""}" data-per="${id}:m:${m}">${mLabel(m, true)}</button>`).join("")}</div>`;
+  } else if (st.k === "q") {
+    const qs = [...new Set(months.map(quarterOf))].reverse(), cur = st.q || qs[0];
+    h += `<div class="chips scroll">${qs.map((q) => `<button class="chip ${q === cur ? "on" : ""}" data-per="${id}:q:${q}">${q.slice(-1)} кв. ${q.slice(0, 4)}</button>`).join("")}</div>`;
+  } else if (st.k === "c") {
+    const opt = (v) => months.map((m) => `<option value="${m}" ${m === v ? "selected" : ""}>${mLabel(m)}</option>`).join("");
+    h += `<div class="pp"><label>с <select data-pers="${id}:a">${opt(sel[0])}</select></label><label>по <select data-pers="${id}:b">${opt(sel[sel.length - 1])}</select></label></div>`;
+  }
+  return { html: h, sel };
+}
+function perText(sel) { return !sel.length ? "" : sel.length === 1 ? mLabel(sel[0]) : mLabel(sel[0]) + " — " + mLabel(sel[sel.length - 1]); }
+
+/* ───── табель ───── */
+function tabelStat(tab, sel) {
+  const T = P().tabel, lim = parseRu(T.po);
+  const out = { dn: 0, h: 0, abs: {}, norm: [0, 0], months: [], partial: false };
+  sel.forEach((k) => {
+    const cells = (T.ludi[tab] || {})[k];
+    const [y, m] = k.split("-").map(Number);
+    const r = { k, dn: 0, h: 0, abs: {} };
+    if (cells) {
+      cells.forEach((c, i) => {
+        const d = new Date(y, m - 1, i + 1);
+        if (lim && d > lim) { out.partial = true; return; }
+        if (typeof c === "number") { if (c > 0) { r.dn++; r.h += c; } } else if (c && ABS[c]) r.abs[c] = (r.abs[c] || 0) + 1;
+      });
+    }
+    const nm = T.norma[k] || [0, 0];
+    r.norm = nm; r.has = !!cells;
+    out.months.push(r);
+    out.dn += r.dn; out.h += r.h; out.norm[0] += nm[0]; out.norm[1] += nm[1];
+    Object.entries(r.abs).forEach(([c, n]) => { out.abs[c] = (out.abs[c] || 0) + n; });
+  });
+  const absD = Object.values(out.abs).reduce((s, n) => s + n, 0);
+  out.yavka = out.dn + absD ? Math.round(out.dn / (out.dn + absD) * 100) : null;
+  return out;
+}
+function calStrip(tab, k) {
+  const cells = (P().tabel.ludi[tab] || {})[k];
+  if (!cells) return "";
+  const [y, m] = k.split("-").map(Number), lim = parseRu(P().tabel.po);
+  const first = (new Date(y, m - 1, 1).getDay() + 6) % 7;
+  let h = `<div class="cal">${["пн", "вт", "ср", "чт", "пт", "сб", "вс"].map((d) => `<span class="cw">${d}</span>`).join("")}`;
+  for (let i = 0; i < first; i++) h += `<span></span>`;
+  cells.forEach((c, i) => {
+    const fut = lim && new Date(y, m - 1, i + 1) > lim;
+    let cls = "c0", t = "";
+    if (typeof c === "number") { cls = "cw1"; t = nf0.format(c); }
+    else if (c === "в") { cls = "cv"; t = "в"; }
+    else if (c && ABS[c]) { cls = "c-" + ABS[c][1]; t = c; }
+    else if (c) { cls = "cv"; t = c; }
+    h += `<span class="cd ${cls} ${fut ? "fut" : ""}"><i>${i + 1}</i>${esc(t)}</span>`;
+  });
+  return h + `</div>`;
+}
+
+/* ───── зарплата: расшифровка ───── */
+function b64(s) { return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)); }
+async function zpDecrypt(z, pin) {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, ["deriveBits"]);
+  const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: b64(z.salt), iterations: z.iter }, base, 512));
+  const iv = b64(z.iv), ct = b64(z.ct);
+  const mk = await crypto.subtle.importKey("raw", bits.slice(32), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  const msg = new Uint8Array(iv.length + ct.length); msg.set(iv); msg.set(ct, iv.length);
+  if (!(await crypto.subtle.verify("HMAC", mk, b64(z.mac), msg))) return null;
+  const ak = await crypto.subtle.importKey("raw", bits.slice(0, 32), "AES-CTR", false, ["decrypt"]);
+  const raw = await crypto.subtle.decrypt({ name: "AES-CTR", counter: iv, length: 128 }, ak, ct);
+  const ds = new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate"));
+  return JSON.parse(await new Response(ds).text());
+}
+function zpLock() { ZP = null; clearTimeout(zpTimer); }
+function zpTouch() { if (ZP) { clearTimeout(zpTimer); zpTimer = setTimeout(() => { zpLock(); render(); }, LOCK_MS); } }
+document.addEventListener("visibilitychange", () => { if (document.hidden && ZP) { zpLock(); render(); } });
+["click", "touchstart", "input"].forEach((ev) => document.addEventListener(ev, zpTouch, { passive: true }));
+
+function lockCard(what) {
+  if (!P() || !P().zarplata) return `<div class="card empty">Зарплаты в архиве нет — на ПК не задан PIN или нет расчётных ведомостей.</div>`;
+  return `<div class="card big lock">
+    <div style="font-size:16px;font-weight:800">${esc(what)} — под PIN-кодом</div>
+    <div class="note" style="padding:0">Тот же PIN, что вводился в сборщике на ПК. Закроется через 5 минут без действий и при сворачивании.</div>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="6" placeholder="PIN" aria-label="PIN-код">
+    <button class="btn" data-unlock="1">Открыть</button>
+    <div id="pinerr" class="bad" style="font-weight:700;min-height:18px"></div>
+  </div>`;
+}
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.id === "pin") unlock(); });
+async function unlock() {
+  const pin = (document.getElementById("pin").value || "").trim();
+  const err = document.getElementById("pinerr");
+  if (!/^\d{4,6}$/.test(pin)) { err.textContent = "Нужно 4–6 цифр"; return; }
+  err.textContent = "Проверяю…";
+  try {
+    const d = await zpDecrypt(P().zarplata, pin);
+    if (!d) { err.textContent = "Неверный PIN"; document.getElementById("pin").value = ""; return; }
+    ZP = d; zpTouch(); render();
+  } catch (x) { err.textContent = "Не удалось открыть: " + x.message; }
+}
+
+function zpSum(tab, sel) {
+  const rec = ZP.ludi[tab] || {};
+  const s = { k: 0, n: 0 }, rows = [];
+  sel.forEach((m) => {
+    const z = rec[m];
+    rows.push({ m, z });
+    if (!z) return;
+    s.n++;
+    Object.entries(z).forEach(([k, v]) => { if (typeof v === "number" && k !== "okl" && k !== "dn" && k !== "h") s[k] = (s[k] || 0) + v; });
+  });
+  return { s, rows };
+}
+function barChart(rows, val, label) {
+  const vals = rows.map((r) => val(r));
+  const mx = Math.max(...vals, 1), n = rows.length, W = 320, H = 120, bw = Math.min(28, (W - 8) / n - 6);
+  const bars = rows.map((r, i) => {
+    const v = vals[i], h = Math.max(v ? 2 : 0, v / mx * (H - 22)), x = 4 + i * ((W - 8) / n) + ((W - 8) / n - bw) / 2, y = H - 18 - h;
+    return `<g><title>${esc(mLabel(r.m))}: ${money(v)} ₸</title><rect x="${x - 3}" y="0" width="${bw + 6}" height="${H}" fill="transparent"/>
+      <path d="M${x},${H - 18} V${y + 4} q0,-4 4,-4 h${bw - 8} q4,0 4,4 V${H - 18} z" fill="var(--accent)"/>
+      <text x="${x + bw / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="var(--muted)">${MON_S[+r.m.slice(5) - 1]}</text></g>`;
+  }).join("");
+  return `<div class="card" style="padding:12px 12px 6px"><div class="note" style="margin-bottom:4px">${esc(label)}</div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(label)}"><line x1="0" x2="${W}" y1="${H - 18}" y2="${H - 18}" stroke="var(--line)"/>${bars}</svg></div>`;
+}
+
+/* ───── экраны ───── */
+function staffRow(s, zp) {
+  return `<button class="row" data-go="#emp/${encodeURIComponent(s.tab)}/t">
+    <span class="m"><span class="n">${esc(s.fio)}</span><span class="d">${esc(s.dolzh)} · ${esc(s.podr)}</span></span>
+    <span class="r">${stBadge(s)}${zp != null ? `<span class="rs num" style="color:var(--muted)">${money(zp)} ₸</span>` : ""}</span>${I.chev}</button>`;
+}
+function viewStaff(b) {
+  if (!DATA) return { top: header("Персонал", "ФИО, должность, подразделение"), main: noData() };
+  if (!P() || !P().personal) return { top: header("Персонал", "Поиск"), main: `<div class="card empty">В архиве нет данных по персоналу. Положите в папку на ПК список сотрудников 1С, табель и папку «РПВ» и соберите архив заново.</div>` };
+  const mode = b === "dep" ? "dep" : "emp";
+  if (b === "abs") staffChip = "abs";
+  const seg = `<div class="seg"><button class="${mode === "emp" ? "on" : ""}" data-go="#staff">Сотрудники</button><button class="${mode === "dep" ? "on" : ""}" data-go="#staff/dep">Подразделения</button></div>`;
+  const tb = P().tabel;
+  const stamp = `<div class="note">По табелю на ${esc(tb ? tb.po : "—")} · список 1С на ${esc(P().personal.na || "—")}</div>`;
+  if (mode === "dep") return { top: header("Персонал · подразделения", "Подразделение"), main: seg + viewDeps() };
+  const all = people();
+  const act = all.filter((s) => !s.uvolen), abs = act.filter(isAbsent), uv = all.filter((s) => s.uvolen);
+  const chips = [["all", "Работают · " + act.length], ["abs", "Отсутствуют · " + abs.length], ["uv", "Уволенные · " + uv.length]];
+  const base = staffChip === "abs" ? abs : staffChip === "uv" ? uv : act;
+  const list = base.filter((s) => match(Q, s.fio, s.dolzh, s.podr, s.tab));
+  let body;
+  if (staffChip === "abs" && !Q) {
+    const g = {};
+    list.forEach((s) => { const k = ABS[s.status.kod][0]; (g[k] = g[k] || []).push(s); });
+    body = Object.entries(g).map(([k, l]) => `<div class="h2">${esc(k)} · ${l.length}</div>` + l.map((s) => staffRow(s)).join("")).join("") || `<div class="empty">Никто не отсутствует</div>`;
+  } else body = list.slice(0, 200).map((s) => staffRow(s)).join("") || `<div class="empty">Ничего не найдено</div>`;
+  return {
+    top: header("Персонал", "ФИО, должность, подразделение"),
+    main: seg + `<div class="chips scroll">${chips.map(([k, l]) => `<button class="chip ${staffChip === k ? "on" : ""}" data-schip="${k}">${l}</button>`).join("")}</div>` +
+      stamp + (Q ? `<div class="note" style="font-weight:700">Найдено: ${list.length}</div>` : "") + body
+  };
+}
+
+function depStats() {
+  const m = {};
+  (P().personal.podrazdeleniya || []).forEach((d) => { m[d] = { name: d, n: 0, abs: 0, ppl: [] }; });
+  people().filter((s) => !s.uvolen).forEach((s) => {
+    const d = m[s.podr] || (m[s.podr] = { name: s.podr, n: 0, abs: 0, ppl: [] });
+    d.n++; d.ppl.push(s); if (isAbsent(s)) d.abs++;
+  });
+  return Object.values(m);
+}
+function viewDeps() {
+  const deps = depStats().filter((d) => match(Q, d.name));
+  let fot = "", sel = [];
+  if (ZP) {
+    const pp = perPicker("d", ZP.mesyacy); sel = pp.sel;
+    const tot = sel.reduce((s, k) => s + (ZP.itogo[k] || 0), 0);
+    fot = `<div class="h2">ФОТ (начислено) · ${esc(perText(sel))}</div>${pp.html}<div class="total"><span>Итого по предприятию</span><b class="num">${money(tot)} ₸</b></div>`;
+  }
+  const rows = deps.map((d) => {
+    const f = ZP ? sel.reduce((s, k) => s + ((ZP.podr[k] || {})[d.name] || { k: 0 }).k, 0) : null;
+    return `<button class="row" data-go="#dep/${encodeURIComponent(d.name)}"><span class="m"><span class="n">${esc(d.name)}</span>
+      <span class="d">${d.n} ${plural(d.n, "человек", "человека", "человек")}${d.abs ? ` · отсутствуют: ${d.abs}` : ""}</span></span>
+      ${f != null ? `<span class="r"><span class="rv num">${money(f)} ₸</span></span>` : ""}${I.chev}</button>`;
+  }).join("");
+  const n = deps.reduce((s, d) => s + d.n, 0);
+  return `<div class="total"><span>Численность (1С)</span><b class="num">${n}</b></div>` + (ZP ? fot : lockCard("ФОТ по подразделениям")) + rows;
+}
+
+function viewDep(name) {
+  const d = depStats().find((x) => x.name === name);
+  if (!d) return { top: backbar("Персонал", "Подразделение"), main: `<div class="empty">Нет в текущих данных</div>` };
+  let main = `<div class="card kv"><div><span>Численность</span><b>${d.n}</b></div><div><span>Отсутствуют</span><b>${d.abs}</b></div>
+    <div><span>Вакансий в табеле</span><b>${(P().personal.vakansii || []).filter((v) => low(v.podr).trim() === low(name).trim()).length}</b></div></div>`;
+  if (ZP) {
+    const pp = perPicker("d", ZP.mesyacy), sel = pp.sel;
+    const tot = sel.reduce((s, k) => s + ((ZP.podr[k] || {})[name] || { k: 0 }).k, 0);
+    main += `<div class="h2">ФОТ · ${esc(perText(sel))}</div>${pp.html}<div class="total"><span>Начислено</span><b class="num">${money(tot)} ₸</b></div>`;
+    if (ZP.mesyacy.length > 1) main += barChart(ZP.mesyacy.map((m) => ({ m })), (r) => ((ZP.podr[r.m] || {})[name] || { k: 0 }).k, "ФОТ по месяцам, ₸");
+  } else main += lockCard("ФОТ подразделения");
+  const vac = (P().personal.vakansii || []).filter((v) => low(v.podr).trim() === low(name).trim());
+  const dsel = ZP ? resolvePer(PER.d, ZP.mesyacy) : [];
+  const pz = (s) => ZP ? zpSum(s.tab, dsel).s.k : null;
+  main += `<div class="h2">Сотрудники · ${d.n}${ZP ? " · начислено за период" : ""}</div>` + d.ppl.sort((a, b) => low(a.fio) < low(b.fio) ? -1 : 1).map((s) => staffRow(s, pz(s))).join("");
+  if (vac.length) main += `<div class="h2">Вакансии · ${vac.length}</div><div class="card kv">${vac.map((v) => `<div><span>${esc(v.dolzh)}</span><b>${v.sovm ? "совмещение" : ""}</b></div>`).join("")}</div>`;
+  return { top: backbar("Подразделение", name), main };
+}
+
+function viewEmp(b) {
+  const [tab, t0] = b.split("/");
+  const t = t0 || "t";
+  const s = emp(tab);
+  if (!s) return { top: backbar("Сотрудник", ""), main: `<div class="empty">Нет в текущих данных</div>` };
+  const st = s.status;
+  const head = `<div class="card kv">
+    <div><span>Должность</span><b>${esc(s.dolzh)}</b></div>
+    <div><span>Подразделение</span><b><button data-go="#dep/${encodeURIComponent(s.podr)}" class="ok" style="font-weight:800">${esc(s.podr)}</button></b></div>
+    ${s.tab.startsWith("f:") ? "" : `<div><span>Табельный №</span><b class="num">${esc(s.tab.replace(/^0+/, ""))}</b></div>`}
+    ${s.priem ? `<div><span>Принят</span><b class="num">${esc(s.priem)}</b></div>` : ""}
+    ${s.oplata ? `<div><span>Оплата</span><b>${esc(s.oplata)}</b></div>` : ""}
+    ${s.sovm ? `<div><span>Совмещение</span><b>${esc(s.sovm.dolzh)} · ${esc(s.sovm.podr)}</b></div>` : ""}
+    <div><span>Статус по табелю</span><b>${s.uvolen ? "уволен" : st ? (ABS[st.kod] ? ABS[st.kod][0] : st.kod === "в" ? "выходной" : st.kod === "у" ? "уволен" : st.kod) + " · " + esc(st.data) : "работает"}</b></div>
+  </div>`;
+  const tabs = [["t", "Табель"], ["z", "Зарплата"], ["p", "Приказы"]];
+  const seg = `<div class="seg">${tabs.map(([k, l]) => `<button class="${t === k ? "on" : ""}" data-go="#emp/${encodeURIComponent(tab)}/${k}">${l}</button>`).join("")}</div>`;
+  let body = "";
+  if (t === "t") body = empTabel(s);
+  else if (t === "z") body = ZP ? empZp(s) : lockCard("Зарплата");
+  else body = empPrik(s);
+  return { top: backbar((s.uvolen ? "Уволен · " : "Сотрудник · ") + s.podr, s.fio), main: head + seg + body };
+}
+
+function empTabel(s) {
+  const T = P().tabel;
+  if (!T) return `<div class="empty">Табеля в архиве нет</div>`;
+  const months = T.mesyacy.filter((k) => (T.ludi[s.tab] || {})[k]);
+  if (!months.length) return `<div class="empty">В табеле этого человека нет</div>`;
+  const pp = perPicker("t", months), st = tabelStat(s.tab, pp.sel);
+  const absTxt = Object.entries(ABS).map(([c, [l]]) => st.abs[c] ? `<div><span>${l}</span><b class="num">${st.abs[c]} дн.</b></div>` : "").join("");
+  let h = pp.html + `<div class="card big">
+      <div class="l">${esc(perText(pp.sel))}${st.partial ? " · по " + esc(T.po) : ""}</div>
+      <div class="v num">${st.dn} <small style="font-size:15px;color:var(--muted)">из ${st.norm[0]} дн. нормы</small></div>
+      <div class="note num" style="padding:0">${nf0.format(st.h)} ч из ${st.norm[1]} ч${st.yavka != null ? ` · явка ${st.yavka}%` : ""}</div>
+    </div>
+    <div class="card kv">${absTxt || `<div><span>Отпуск, больничный, прогулы</span><b>нет</b></div>`}</div>`;
+  if (pp.sel.length === 1) h += calStrip(s.tab, pp.sel[0]) + `<div class="note">Цифры — часы; о — отпуск, б/л — больничный, б/с — без сохранения, н — отсутствие, в — выходной.</div>`;
+  else h += `<div class="card tbl"><div class="tr th"><span>Месяц</span><span>Дни</span><span>Часы</span><span>Отсутств.</span></div>${st.months.map((r) => {
+    const a = Object.entries(r.abs).map(([c, n]) => c + " " + n).join(", ");
+    return `<div class="tr"><span>${mLabel(r.k, true)}</span><span class="num">${r.dn}/${r.norm[0]}</span><span class="num">${nf0.format(r.h)}</span><span>${esc(a || "—")}</span></div>`;
+  }).join("")}</div>`;
+  h += `<div class="note">Табель по ${esc(T.po)}. Явка — доля отработанных дней среди рабочих и пропущенных (отпуск, больничный, б/с, отсутствие).</div>`;
+  return h;
+}
+
+function empZp(s) {
+  const months = ZP.mesyacy;
+  const pp = perPicker("z", months), sel = pp.sel;
+  const { s: sm, rows } = zpSum(s.tab, sel);
+  if (!sm.n) return pp.html + `<div class="empty">За ${esc(perText(sel))} начислений нет</div>`;
+  const osn = (sm.ok || 0) + (sm.ch || 0) + (sm.sd || 0);
+  let h = pp.html + `<div class="card big">
+      <div class="l">Начислено · ${esc(perText(sel))}</div>
+      <div class="v num">${money(sm.k)} <small style="font-size:15px;color:var(--muted)">₸</small></div>
+      <div class="note num" style="padding:0">основная ${money(osn)} · премии ${money(sm.pr)}${sm.n > 1 ? ` · в среднем ${money(sm.k / sm.n)} в месяц` : ""}</div>
+    </div>
+    <div class="card kv">${ZPK.filter(([k]) => sm[k]).map(([k, l]) => `<div><span>${l}</span><b class="num">${money(sm[k])}</b></div>`).join("")}</div>`;
+  if (rows.length > 1) h += barChart(rows, (r) => r.z ? r.z.k : 0, "Начислено по месяцам, ₸");
+  h += `<div class="card tbl"><div class="tr th"><span>Месяц</span><span>Начислено</span><span>Премия</span><span>Дни</span></div>${rows.map((r) =>
+    `<div class="tr"><span>${mLabel(r.m, true)}</span><span class="num">${r.z ? money(r.z.k) : "—"}</span><span class="num">${r.z && r.z.pr ? money(r.z.pr) : "—"}</span><span class="num">${r.z && r.z.dn ? r.z.dn : "—"}</span></div>`).join("")}</div>`;
+  const lastOkl = rows.slice().reverse().find((r) => r.z && r.z.okl);
+  if (lastOkl) h += `<div class="note num">Оклад (тариф) по 1С: ${money(lastOkl.z.okl)}${lastOkl.z.okl < 5000 ? " ₸/час" : " ₸"}</div>`;
+  h += `<div class="note">Только закрытые месяцы — по ${esc(mLabel(months[months.length - 1]))}. Источник — расчётная ведомость 1С.</div>`;
+  return h;
+}
+
+function empPrik(s) {
+  const list = ((P().prikazy || {}).ludi || {})[s.tab] || [];
+  if (!list.length) return `<div class="empty">Кадровых приказов за год нет</div>`;
+  const g = {};
+  list.forEach((o) => { const x = g[o.k] = g[o.k] || { n: 0, dn: 0 }; x.n++; x.dn += o.dn || 0; });
+  const sum = Object.entries(g).sort((a, b) => b[1].n - a[1].n).map(([k, x]) => `<div><span>${esc(k)}</span><b class="num">${x.n} ${plural(x.n, "раз", "раза", "раз")}${x.dn ? " · " + nf0.format(x.dn) + " дн." : ""}</b></div>`).join("");
+  const rows = list.slice().reverse().map((o) => `<div class="firm"><div class="fh"><span>${esc(o.t)}</span><span class="num" style="color:var(--muted);flex:none">№ ${esc(o.n)}</span></div>
+    <div class="note num" style="padding:2px 0 0">${esc(o.d || "")}${o.s && o.po && o.s !== o.po ? ` · с ${esc(o.s)} по ${esc(o.po)}` : ""}${o.dn ? ` · ${nf0.format(o.dn)} дн.` : ""}</div></div>`).join("");
+  return `<div class="h2">Итого за год</div><div class="card kv">${sum}</div><div class="h2">Приказы · ${list.length}</div><div class="card">${rows}</div>`;
+}
+
+/* ───── для Главной и поиска ───── */
+function homeAbsent() {
+  if (!P() || !P().personal) return "";
+  const abs = people().filter(isAbsent);
+  const g = {};
+  abs.forEach((s) => { const k = ABS[s.status.kod][0]; g[k] = (g[k] || 0) + 1; });
+  const txt = Object.entries(g).map(([k, n]) => k.toLowerCase() + " " + n).join(" · ");
+  return `<button class="row" data-go="#staff/abs"><span class="m"><span class="n">Сегодня отсутствуют · ${abs.length}</span><span class="d">${esc(txt || "все на месте")} · табель на ${esc(P().tabel ? P().tabel.po : "—")}</span></span>${I.chev}</button>`;
+}
+function staffSearch(res) {
+  people().forEach((s) => match(Q, s.fio, s.dolzh, s.podr) && res.push({ ty: s.uvolen ? "Сотрудник · уволен" : "Сотрудник", t: s.fio, s: `${s.dolzh} · ${s.podr}`, h: "#emp/" + encodeURIComponent(s.tab) + "/t" }));
+}
+
+/* ───── события раздела ───── */
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-per],[data-schip],[data-unlock]");
+  if (!b) return;
+  e.stopPropagation();
+  if (b.dataset.unlock) { unlock(); return; }
+  if (b.dataset.schip) { staffChip = b.dataset.schip; if (location.hash === "#staff/abs") history.replaceState(null, "", "#staff"); render(); return; }
+  const [id, f, v] = b.dataset.per.split(":");
+  PER[id][f] = v;
+  render(true);
+}, true);
+document.addEventListener("change", (e) => {
+  const el = e.target.closest("[data-pers]");
+  if (!el) return;
+  const [id, f] = el.dataset.pers.split(":");
+  PER[id].k = "c"; PER[id][f] = el.value;
+  render(true);
+});

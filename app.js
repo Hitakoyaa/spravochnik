@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.4";
+const APP_VERSION = "1.5";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -98,6 +98,10 @@ async function loadArchive(file, force) {
     zerno: JSON.parse(files["zerno.json"]), meshki: JSON.parse(files["meshki.json"]),
     razn: JSON.parse(files["raznaryadki.json"]), loadedAt: new Date().toLocaleString("ru-RU"), fileName: file.name
   };
+  if (files["personal.json"]) {
+    const j = (n) => files[n] ? JSON.parse(files[n]) : null;
+    d.pers = { personal: j("personal.json"), tabel: j("tabel.json"), prikazy: j("prikazy.json"), zarplata: j("zarplata.json") };
+  }
   if (DATA && !force) {
     const a = parseRu(d.meta.data_na_utro), b = parseRu(DATA.meta.data_na_utro);
     if (a && b && a < b) return { older: true, d };
@@ -107,6 +111,7 @@ async function loadArchive(file, force) {
 
 function saveData(d) {
   DATA = d;
+  zpLock();
   if (!lsSet(LS_DATA, d)) toast("Не удалось сохранить данные в памяти телефона");
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) { /* */ }
 }
@@ -143,7 +148,7 @@ const TABS = [
   { id: "home", label: "Главная", ic: I.home, h: "#home", act: ["home"] },
   { id: "stock", label: "Остатки", ic: I.stock, h: "#stock/all", act: ["stock", "item", "zerno", "tara", "taraall"] },
   { id: "razn", label: "Разнарядки", ic: I.ship, h: "#razn/active", act: ["razn", "rz"] },
-  { id: "staff", label: "Персонал", ic: I.staff, h: "#staff", act: ["staff"] },
+  { id: "staff", label: "Персонал", ic: I.staff, h: "#staff", act: ["staff", "emp", "dep"] },
   { id: "req", label: "Заявки", ic: I.req, h: "#req", act: ["req"] },
   { id: "more", label: "Ещё", ic: I.more, h: "#more", act: ["more", "load", "about", "settings"] }
 ];
@@ -243,6 +248,7 @@ function viewHome() {
   return {
     top: header("Справочник экономиста · ТОО «Урожай»", "Поиск по всем данным"),
     main: `<div class="tiles">${tiles.map((t) => `<button class="tile" data-go="${t.h}"><span class="l">${t.l}</span><span class="v num">${t.v} <small>${t.u}</small></span><span class="s">${esc(t.s)}</span></button>`).join("")}</div>
+    ${homeAbsent()}
     <div class="h2">Требует внимания${total ? " · " + total : ""}</div>
     ${att || `<div class="card empty" style="padding:16px">Всё в порядке</div>`}
     <div class="note">Мешки: предупреждение, если хватит меньше чем на ${SET.porog} дней (меняется в «Ещё → Настройки»).</div>`
@@ -257,6 +263,7 @@ function globalSearch() {
     z.po_firmam.forEach((f) => match(Q, f.firma, z.kultura) && !match(Q, z.kultura) && res.push({ ty: "Зерно · фирма", t: f.firma, s: `${z.kultura}: ${T(f.ostatok_kg)} т`, h: "#zerno/" + encodeURIComponent(z.key) }));
   });
   razn().forEach((x) => match(Q, x.pokupatel, x.produkt_name, x.nomer) && res.push({ ty: isK(x) ? "Комбикорм · хозяйство ТНК" : "Разнарядка" + (x.nomer ? " № " + x.nomer : ""), t: x.pokupatel, s: `${x.produkt_name} · остаток ${T(x.ostatok_kg)} т`, h: "#rz/" + encodeURIComponent(x.key) }));
+  staffSearch(res);
   tara().forEach((m) => match(Q, m.name, m.mesto, (m.dlya || []).join(" ")) && res.push({ ty: "Мешкотара · " + m.mesto, t: m.name, s: `${N(m.ostatok)} ${m.ed}` + (m.hvatit_dney != null ? " · " + daysTxt(m.hvatit_dney) : ""), h: "#tara/" + encodeURIComponent(m.key) }));
   return `<div class="note" style="font-weight:700">Найдено: ${res.length}</div>` + (res.length ? res.slice(0, 80).map(resRow).join("") : `<div class="empty">Ничего не найдено</div>`);
 }
@@ -514,7 +521,7 @@ function viewMore() {
   return {
     top: backbar("Справочник экономиста", "Ещё"),
     main: items.map((i) => `<button class="row" data-go="${i.h}"><span class="m"><span class="n">${i.t}</span><span class="d">${esc(i.s)}</span></span>${I.chev}</button>`).join("") +
-      `<div class="note">Выработка, тарифы, штатное расписание, заметки — на этапе 3. Версия приложения ${APP_VERSION}.</div>`
+      `<div class="note">Выработка, тарифы, штатное расписание, заметки — следующий шаг. Версия приложения ${APP_VERSION}.</div>`
   };
 }
 
@@ -580,7 +587,9 @@ function render(mainOnly) {
     case "taraall": v = viewTaraAll(); break;
     case "razn": v = viewRazn(r.b); break;
     case "rz": v = viewRz(r.b); break;
-    case "staff": v = viewSoon("Персонал", "этап 4", "Сотрудники, табель из Google-таблицы, зарплата из 1С с PIN-кодом."); break;
+    case "staff": v = viewStaff(r.b); break;
+    case "emp": v = viewEmp(r.b); break;
+    case "dep": v = viewDep(r.b); break;
     case "req": v = viewSoon("Заявки", "этап 3", "Заявки на закуп и оплату из реестра Word, поиск по позиции и поставщику."); break;
     case "more": v = viewMore(); break;
     case "load": v = viewLoad(); break;
@@ -627,7 +636,7 @@ document.addEventListener("click", async (e) => {
   else if (a === "pick") { document.getElementById("file").click(); }
   else if (a === "force") { if (pending) { saveData(pending); pending = null; toast("Загружено"); go("#home"); } }
   else if (a === "wipe") {
-    if (b.dataset.sure) { try { localStorage.removeItem(LS_DATA); } catch (er) { /* */ } DATA = null; toast("Данные удалены"); go("#home"); }
+    if (b.dataset.sure) { try { localStorage.removeItem(LS_DATA); } catch (er) { /* */ } DATA = null; zpLock(); toast("Данные удалены"); go("#home"); }
     else { b.dataset.sure = "1"; b.textContent = "Точно удалить? Нажмите ещё раз"; }
   }
 });
