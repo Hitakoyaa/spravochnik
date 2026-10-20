@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.7";
+const APP_VERSION = "1.8";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -143,7 +143,10 @@ function route() {
   const [a, ...rest] = h.split("/");
   return { a: a || "home", b: rest.join("/") };
 }
-window.addEventListener("hashchange", () => { render(); document.getElementById("main").scrollTop = 0; });
+window.addEventListener("hashchange", () => {
+  if (location.hash === "#share") { takeShared(); return; }
+  render(); document.getElementById("main").scrollTop = 0;
+});
 
 const TABS = [
   { id: "home", label: "Главная", ic: I.home, h: "#home", act: ["home", "vyr", "vyrd"] },
@@ -539,9 +542,9 @@ function viewLoad() {
     <div class="h2">Как обновить</div>
     <div class="card kv">
       <div><span>1. На ПК</span><b>«Собрать_для_телефона» → кнопка</b></div>
-      <div><span>2. Telegram на ПК</span><b>архив из «Готово» → «Избранное»</b></div>
-      <div><span>3. Telegram на телефоне</span><b>нажать на файл, скачать</b></div>
-      <div><span>4. Здесь</span><b>«Выбрать архив» → Загрузки → Telegram</b></div>
+      <div><span>2. Сборщик сам</span><b>отправляет архив в Telegram-бот</b></div>
+      <div><span>3. Telegram на телефоне</span><b>файл от бота → ⋮ → «Поделиться» → «Справочник»</b></div>
+      <div><span>Или вручную</span><b>«Выбрать архив» → Загрузки → Telegram</b></div>
     </div>
     <div class="note">Данные хранятся только в этом телефоне и в интернет не отправляются.</div>`
   };
@@ -659,7 +662,26 @@ let pending = null;
 document.getElementById("file").addEventListener("change", async (e) => {
   const f = e.target.files[0];
   e.target.value = "";
-  if (!f) return;
+  if (f) handleArchive(f);
+});
+
+// архив, присланный через «Поделиться → Справочник»
+async function takeShared() {
+  if (location.hash !== "#share") return;
+  history.replaceState(null, "", "#home");
+  render();
+  try {
+    const c = await caches.open("share-inbox");
+    const r = await c.match("/__spr_shared_archive__");
+    if (!r) { toast("Файл не получен — попробуйте ещё раз или «Ещё → Загрузить данные»"); return; }
+    const blob = await r.blob();
+    const name = decodeURIComponent(r.headers.get("X-Name") || "архив.zip");
+    await c.delete("/__spr_shared_archive__");
+    await handleArchive(new File([blob], name));
+  } catch (err) { toast("Не получилось: " + err.message); }
+}
+
+async function handleArchive(f) {
   try {
     const res = await loadArchive(f, false);
     if (res.older) {
@@ -676,14 +698,14 @@ document.getElementById("file").addEventListener("change", async (e) => {
   } catch (err) {
     toast("Не получилось: " + err.message);
   }
-});
+}
 
 if (window.matchMedia) {
   try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (SET.theme === "auto") { applyTheme(); render(); } }); } catch (e) { /* */ }
 }
 
 applyTheme();
-render();
+if (location.hash === "#share") takeShared(); else render();
 
 if ("serviceWorker" in navigator) {
   // при выходе новой версии — один раз перезагрузиться, чтобы сразу открылась она
