@@ -233,7 +233,7 @@ function viewDep(name) {
   const d = depStats().find((x) => x.name === name);
   if (!d) return { top: backbar("Персонал", "Подразделение"), main: `<div class="empty">Нет в текущих данных</div>` };
   let main = `<div class="card kv"><div><span>Численность</span><b>${d.n}</b></div><div><span>Отсутствуют</span><b>${d.abs}</b></div>
-    <div><span>Вакансий (по табелю)</span><b>${vacOf(name).reduce((s, v) => s + (v.ed || 1), 0)} ед.</b></div></div>`;
+    ${SH() ? `<div><span>Свободно по штатке</span><b>${nf0.format(vacOf(name).reduce((s, v) => s + v.vakant, 0))} ед.</b></div>` : ""}</div>`;
   if (ZP) {
     const pp = perPicker("d", ZP.mesyacy), sel = pp.sel;
     const tot = sel.reduce((s, k) => s + ((ZP.podr[k] || {})[name] || { k: 0 }).k, 0);
@@ -244,7 +244,7 @@ function viewDep(name) {
   const dsel = ZP ? resolvePer(PER.d, ZP.mesyacy) : [];
   const pz = (s) => ZP ? zpSum(s.tab, dsel).s.k : null;
   main += `<div class="h2">Сотрудники · ${d.n}${ZP ? " · начислено за период" : ""}</div>` + d.ppl.sort((a, b) => low(a.fio) < low(b.fio) ? -1 : 1).map((s) => staffRow(s, pz(s))).join("");
-  if (vac.length) main += `<div class="h2">Вакансии · ${vac.reduce((s, v) => s + (v.ed || 1), 0)} ед.</div><div class="card kv">${vac.map((v) => `<div><span>${esc(v.dolzh)}</span><b class="num">${v.ed || 1} ед.</b></div>`).join("")}</div>`;
+  if (vac.length) main += `<div class="h2">Свободно по штатке · ${nf0.format(vac.reduce((s, v) => s + v.vakant, 0))} ед.</div><div class="card shg">${vac.map(vacRow).join("")}</div>`;
   return { top: backbar("Подразделение", name), main };
 }
 
@@ -361,50 +361,62 @@ document.addEventListener("change", (e) => {
 
 /* ───── вакансии и штатное расписание ───── */
 function podrKey(p) { return low(p).replace(/крупяной завод/, "крупозавод").replace(/\s+/g, " ").trim(); }
-function vacOf(name) { return ((P() && P().personal && P().personal.vakansii) || []).filter((v) => podrKey(v.podr) === podrKey(name)); }
+function vacOf(name) {
+  const sh = SH();
+  if (!sh) return [];
+  return sh.okladniki.concat(sh.sdelshiki).filter((x) => x.vakant > 0 && x.podr1c && podrKey(x.podr1c) === podrKey(name));
+}
+function payTxt(x) { return money(x.oklad) + (x.doplata ? " + " + money(x.doplata) + " премия/KPI" : ""); }
+function vacRow(x) {
+  const per = x.oklad + (x.doplata || 0);
+  return `<div class="shr"><span class="m"><span class="n2">${esc(x.dolzh)}${x.v_tabele ? ` <span class="badge b-info">ищут</span>` : ""}</span>
+    <span class="d num">${payTxt(x)} = ${money(per)} ₸ на ед. · занято ${nf0.format(x.zanyato)} из ${nf0.format(x.ed)}</span></span>
+    <span class="r2"><span class="num rv2 bad">${nf0.format(x.vakant)} ед.</span><span class="d num">${money(per * x.vakant)} ₸</span></span></div>`;
+}
 function SH() { return P() && P().shtat ? P().shtat : null; }
 function edTxt(x) { return nf0.format(x) + " ед."; }
 
 function viewShtat(b) {
   const top = (sub) => backbar("Штатка" + (SH() ? " на " + SH().data : ""), sub);
-  if (!SH()) return { top: top("Штатное расписание"), main: `<div class="card empty">Штатного расписания в архиве нет. Положите файл «…штатное расписание…» в папку на ПК и соберите архив заново.</div>` };
+  if (!SH()) return { top: top("Штатное расписание"), main: `<div class="card empty">Штатного расписания в архиве нет. Положите файл «…штатное расписание…» в папку «Данные» на ПК и соберите архив заново.</div>` };
   const sh = SH(), tab = b || "okl";
   const okl = sh.okladniki, sd = sh.sdelshiki;
-  const vacO = (P().personal.vakansii || []);
-  const vacOed = vacO.reduce((s, v) => s + (v.ed || 1), 0);
-  const uch = sh.sdel_uchastki || [];
-  const vacSed = uch.reduce((s, u) => s + (u.rabotaet != null ? Math.max(u.shtat - u.rabotaet, 0) : 0), 0);
   const sum = (l, k) => l.reduce((s, x) => s + (x[k] || 0), 0);
+  const vO = okl.filter((x) => x.vakant > 0), vS = sd.filter((x) => x.vakant > 0);
+  const fotVac = (l) => l.reduce((s, x) => s + (x.oklad + (x.doplata || 0)) * x.vakant, 0);
   const head = `<div class="tiles">
-      <button class="tile" data-go="#shtat/okl"><span class="l">Окладники</span><span class="v num">${nf0.format(sum(okl, "ed"))} <small>ед.</small></span><span class="s num">${money(sum(okl, "mes"))} ₸ в месяц</span></button>
-      <button class="tile" data-go="#shtat/sdel"><span class="l">Сдельщики</span><span class="v num">${nf0.format(sum(sd, "ed"))} <small>ед.</small></span><span class="s num">${money(sum(sd, "mes"))} ₸ в месяц</span></button>
+      <button class="tile" data-go="#shtat/okl"><span class="l">Окладники</span><span class="v num">${nf0.format(sum(okl, "ed"))} <small>ед.</small></span><span class="s num">занято ${nf0.format(sum(okl, "zanyato"))} · ${money(sum(okl, "mes"))} ₸/мес</span></button>
+      <button class="tile" data-go="#shtat/sdel"><span class="l">Сдельщики</span><span class="v num">${nf0.format(sum(sd, "ed"))} <small>ед.</small></span><span class="s num">занято ${nf0.format(sum(sd, "zanyato"))} · ${money(sum(sd, "mes"))} ₸/мес</span></button>
     </div>
-    <button class="row" data-go="#shtat/vac"><span class="m"><span class="n">Вакансии · ${nf0.format(vacOed + vacSed)} ед.</span><span class="d">окладники ${vacOed} (по табелю) · сдельщики ${vacSed} (штат − работают)</span></span>${I.chev}</button>`;
+    <button class="row" data-go="#shtat/vac"><span class="m"><span class="n">Свободно по штатке · ${nf0.format(sum(vO, "vakant") + sum(vS, "vakant"))} ед.</span><span class="d">окладники ${nf0.format(sum(vO, "vakant"))} · сдельщики ${nf0.format(sum(vS, "vakant"))}</span></span>${I.chev}</button>`;
   const seg = `<div class="seg">${[["okl", "Окладники"], ["sdel", "Сдельщики"], ["vac", "Вакансии"]].map(([k, l]) => `<button class="${tab === k ? "on" : ""}" data-go="#shtat/${k}">${l}</button>`).join("")}</div>`;
   const srch = `<label class="search">${I.search}<input id="q" type="search" enterkeyhint="search" aria-label="Поиск" placeholder="Должность или подразделение" value="${esc(Q)}" autocomplete="off"><button class="iconbtn" id="qx" style="width:40px;height:40px;color:var(--muted);${Q ? "" : "display:none"}" aria-label="Очистить поиск" data-act="clearq">${I.x}</button></label>`;
+  const grpOf = (x) => x.podr || x.uchastok;
+  const groupBy = (list) => { const g = new Map(); list.forEach((x) => { const k = grpOf(x); if (!g.has(k)) g.set(k, []); g.get(k).push(x); }); return g; };
   let body = "";
   if (tab === "okl" || tab === "sdel") {
-    const list = (tab === "okl" ? okl : sd).filter((x) => match(Q, x.dolzh, x.podr || x.uchastok, x.blok || ""));
-    const g = new Map();
-    list.forEach((x) => { const k = tab === "okl" ? x.podr : x.uchastok; if (!g.has(k)) g.set(k, []); g.get(k).push(x); });
-    body = [...g.entries()].map(([k, l]) => {
-      const u = tab === "sdel" ? uch.find((z) => z.uchastok === k) : null;
-      const sub = tab === "okl" ? (l[0].blok !== k ? l[0].blok + " · " : "") : (u && u.rabotaet != null ? `работают ${u.rabotaet} · ` : "");
-      return `<div class="card shg"><div class="shh"><span class="m"><span class="n">${esc(k)}</span><span class="d num">${esc(sub)}${edTxt(sum(l, "ed"))} · ${money(sum(l, "mes"))} ₸/мес</span></span></div>
-        ${l.map((x) => `<div class="shr"><span class="m"><span class="n2">${esc(x.dolzh)}</span><span class="d num">${x.ed > 1 ? edTxt(x.ed) + " × " : ""}${money(x.oklad)}${x.doplata ? " + доплата " + money(x.doplata) : ""}</span></span><span class="num rv2">${money(x.mes)}</span></div>`).join("")}
+    const list = (tab === "okl" ? okl : sd).filter((x) => match(Q, x.dolzh, grpOf(x), x.blok || ""));
+    body = [...groupBy(list).entries()].map(([k, l]) => {
+      const sub = tab === "okl" && l[0].blok !== k ? l[0].blok + " · " : "";
+      return `<div class="card shg"><div class="shh"><span class="m"><span class="n">${esc(k)}</span><span class="d num">${esc(sub)}${edTxt(sum(l, "ed"))}, занято ${nf0.format(sum(l, "zanyato"))} · ${money(sum(l, "mes"))} ₸/мес</span></span></div>
+        ${l.map((x) => `<div class="shr"><span class="m"><span class="n2">${esc(x.dolzh)}</span><span class="d num">${x.ed > 1 ? edTxt(x.ed) + " × " : ""}${payTxt(x)}</span></span>
+          <span class="r2"><span class="num rv2">${money(x.mes)}</span><span class="d num ${x.vakant > 0 ? "bad" : "ok"}">${x.vakant > 0 ? "свободно " + nf0.format(x.vakant) : "занято"}</span></span></div>`).join("")}
       </div>`;
     }).join("") || `<div class="empty">Ничего не найдено</div>`;
     body = `<div class="total"><span>${tab === "okl" ? "Окладники" : "Сдельщики (по 50 кг)"}${Q ? " · найдено" : ""}</span><b class="num">${edTxt(sum(list, "ed"))} · ${money(sum(list, "mes"))} ₸</b></div>` + body +
-      `<div class="note">${tab === "okl" ? "В месяц = (оклад + доплата KPI/премия) × ед." : "Оклад по штатке = норма × действующий тариф (у элеваторов и служб — средняя зарплата)."}</div>`;
+      `<div class="note">${tab === "okl" ? "В месяц = (оклад + премия/KPI по штатке) × ед." : "Оклад по штатке = норма × действующий тариф (у элеваторов и служб — средняя зарплата)."} «Занято» — сотрудники из 1С, сопоставленные с должностью по названию и подразделению.</div>`;
   } else {
-    const g = new Map();
-    vacO.filter((v) => match(Q, v.dolzh, v.podr)).forEach((v) => { if (!g.has(v.podr)) g.set(v.podr, []); g.get(v.podr).push(v); });
-    body = `<div class="h2">Окладники · ${vacOed} ед. · по табелю</div>` + ([...g.entries()].map(([k, l]) => `<div class="card shg"><div class="shh"><span class="m"><span class="n">${esc(k)}</span><span class="d">${edTxt(l.reduce((s, v) => s + (v.ed || 1), 0))}</span></span></div>
-      ${l.map((v) => `<div class="shr"><span class="m"><span class="n2">${esc(v.dolzh)}</span></span><span class="num rv2">${edTxt(v.ed || 1)}</span></div>`).join("")}</div>`).join("") || `<div class="empty">Нет</div>`);
-    const ul = uch.filter((u) => match(Q, u.uchastok, u.podr || ""));
-    body += `<div class="h2">Сдельщики · ${vacSed} ед. · штат − работают</div><div class="card tbl"><div class="tr th tr3"><span>Участок</span><span>Штат</span><span>Работают</span><span>Не хватает</span></div>${ul.map((u) =>
-      `<div class="tr tr3"><span>${esc(u.uchastok)}</span><span class="num">${nf0.format(u.shtat)}</span><span class="num">${u.rabotaet != null ? u.rabotaet : "—"}</span><span class="num ${u.rabotaet != null && u.shtat > u.rabotaet ? "bad" : ""}">${u.rabotaet != null ? Math.max(u.shtat - u.rabotaet, 0) : "—"}</span></div>`).join("")}</div>
-      <div class="note">Работают — сотрудники подразделения с отметкой «Сдельно» в табеле на сегодня. Штат сдельщиков — по 50 кг, на полную загрузку.</div>`;
+    const blk = (title, l) => {
+      const f = l.filter((x) => match(Q, x.dolzh, grpOf(x)));
+      if (!f.length) return `<div class="h2">${title}</div><div class="card empty" style="padding:14px">Нет</div>`;
+      return `<div class="h2">${title} · ${nf0.format(sum(f, "vakant"))} ед. · ${money(fotVac(f))} ₸/мес</div>` +
+        [...groupBy(f).entries()].map(([k, g]) => `<div class="card shg"><div class="shh"><span class="m"><span class="n">${esc(k)}</span><span class="d num">свободно ${edTxt(sum(g, "vakant"))} · ${money(fotVac(g))} ₸/мес</span></span></div>${g.map(vacRow).join("")}</div>`).join("");
+    };
+    body = blk("Окладники", vO) + blk("Сдельщики", vS);
+    const tl = sh.tabel_lishnie || [], sv = sh.sverh_shtata || [];
+    if (tl.length) body += `<div class="h2">В табеле — вакансия, а по 1С занято</div><div class="card kv">${tl.map((v) => `<div><span>${esc(v.dolzh)}</span><b>${esc(v.podr)}</b></div>`).join("")}</div><div class="note">Эти строки «ВАКАНСИЯ» в табеле, вероятно, устарели — должность уже занята (или её нет в штатке).</div>`;
+    if (sv.length) body += `<div class="h2">Работают сверх штата</div><div class="card kv">${sv.map((v) => `<div><span>${esc(v.fio)}</span><b>${esc(v.dolzh)}</b></div>`).join("")}</div>`;
+    body += `<div class="note">Свободно = ед. по штатке − сотрудники 1С на этой должности. «Ищут» — по должности есть строка «ВАКАНСИЯ» в табеле. Сумма — оклад + премия/KPI на свободные ед. в месяц.</div>`;
   }
   return { top: top(tab === "okl" ? "Окладники" : tab === "sdel" ? "Сдельщики" : "Вакансии") + `<div style="padding:0 16px 8px">${srch}</div>`, main: head + seg + body };
 }
