@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.6.4";
+const APP_VERSION = "1.7";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -98,6 +98,7 @@ async function loadArchive(file, force) {
     zerno: JSON.parse(files["zerno.json"]), meshki: JSON.parse(files["meshki.json"]),
     razn: JSON.parse(files["raznaryadki.json"]), loadedAt: new Date().toLocaleString("ru-RU"), fileName: file.name
   };
+  if (files["vyrabotka.json"]) d.vyr = JSON.parse(files["vyrabotka.json"]);
   if (files["personal.json"]) {
     const j = (n) => files[n] ? JSON.parse(files[n]) : null;
     d.pers = { personal: j("personal.json"), shtat: j("shtat.json"), tabel: j("tabel.json"), prikazy: j("prikazy.json"), zarplata: j("zarplata.json") };
@@ -145,7 +146,7 @@ function route() {
 window.addEventListener("hashchange", () => { render(); document.getElementById("main").scrollTop = 0; });
 
 const TABS = [
-  { id: "home", label: "Главная", ic: I.home, h: "#home", act: ["home"] },
+  { id: "home", label: "Главная", ic: I.home, h: "#home", act: ["home", "vyr", "vyrd"] },
   { id: "stock", label: "Остатки", ic: I.stock, h: "#stock/all", act: ["stock", "item", "zerno", "tara", "taraall"] },
   { id: "razn", label: "Разнарядки", ic: I.ship, h: "#razn/active", act: ["razn", "rz"] },
   { id: "staff", label: "Персонал", ic: I.staff, h: "#staff", act: ["staff", "emp", "dep"] },
@@ -247,7 +248,7 @@ function viewHome() {
   const total = groups.reduce((s, g) => s + G[g.id].length, 0) + (old >= 1 ? 1 : 0);
   return {
     top: header("Справочник экономиста · ТОО «Урожай»", "Поиск по всем данным"),
-    main: `<div class="tiles">${tiles.map((t) => `<button class="tile" data-go="${t.h}"><span class="l">${t.l}</span><span class="v num">${t.v} <small>${t.u}</small></span><span class="s">${esc(t.s)}</span></button>`).join("")}</div>
+    main: `<div class="tiles">${tiles.map((t) => `<button class="tile" data-go="${t.h}"><span class="l">${t.l}</span><span class="v num">${t.v} <small>${t.u}</small></span><span class="s">${esc(t.s)}</span></button>`).join("")}${vyrTile()}</div>
     ${homeAbsent()}
     <div class="h2">Требует внимания${total ? " · " + total : ""}</div>
     ${att || `<div class="card empty" style="padding:16px">Всё в порядке</div>`}
@@ -515,6 +516,7 @@ function viewSoon(title, stage, what) {
 function viewMore() {
   const items = [
     { t: "Загрузить данные", s: DATA ? "сейчас: на " + DATA.meta.data_na_utro : "данных пока нет", h: "#load" },
+    { t: "Выработка", s: V() ? "по подразделениям, данные по " + V().po : "нет в архиве", h: "#vyr" },
     { t: "Штатное расписание", s: P() && P().shtat ? "на " + P().shtat.data + " · окладники, сдельщики, вакансии" : "нет в архиве", h: "#shtat/okl" },
     { t: "О данных", s: "даты источников, предупреждения сборщика", h: "#about" },
     { t: "Настройки", s: "тема, порог дней для мешкотары", h: "#settings" }
@@ -522,7 +524,7 @@ function viewMore() {
   return {
     top: backbar("Справочник экономиста", "Ещё"),
     main: items.map((i) => `<button class="row" data-go="${i.h}"><span class="m"><span class="n">${i.t}</span><span class="d">${esc(i.s)}</span></span>${I.chev}</button>`).join("") +
-      `<div class="note">Выработка, тарифы, заметки — следующий шаг. Версия приложения ${APP_VERSION}.</div>`
+      `<div class="note">Тарифы, заметки, заявки — следующие шаги. Версия приложения ${APP_VERSION}.</div>`
   };
 }
 
@@ -597,6 +599,8 @@ function render(mainOnly) {
     case "about": v = viewAbout(); break;
     case "settings": v = viewSettings(); break;
     case "shtat": v = viewShtat(r.b); break;
+    case "vyr": v = viewVyr(); break;
+    case "vyrd": v = viewVyrD(r.b); break;
     default: v = viewHome();
   }
   document.getElementById("main").innerHTML = v.main;
