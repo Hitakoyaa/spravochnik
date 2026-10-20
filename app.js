@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.5.2";
+const APP_VERSION = "1.6";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -100,7 +100,7 @@ async function loadArchive(file, force) {
   };
   if (files["personal.json"]) {
     const j = (n) => files[n] ? JSON.parse(files[n]) : null;
-    d.pers = { personal: j("personal.json"), tabel: j("tabel.json"), prikazy: j("prikazy.json"), zarplata: j("zarplata.json") };
+    d.pers = { personal: j("personal.json"), shtat: j("shtat.json"), tabel: j("tabel.json"), prikazy: j("prikazy.json"), zarplata: j("zarplata.json") };
   }
   if (DATA && !force) {
     const a = parseRu(d.meta.data_na_utro), b = parseRu(DATA.meta.data_na_utro);
@@ -150,7 +150,7 @@ const TABS = [
   { id: "razn", label: "Разнарядки", ic: I.ship, h: "#razn/active", act: ["razn", "rz"] },
   { id: "staff", label: "Персонал", ic: I.staff, h: "#staff", act: ["staff", "emp", "dep"] },
   { id: "req", label: "Заявки", ic: I.req, h: "#req", act: ["req"] },
-  { id: "more", label: "Ещё", ic: I.more, h: "#more", act: ["more", "load", "about", "settings"] }
+  { id: "more", label: "Ещё", ic: I.more, h: "#more", act: ["more", "load", "about", "settings", "shtat"] }
 ];
 
 function renderNav(r) {
@@ -515,13 +515,14 @@ function viewSoon(title, stage, what) {
 function viewMore() {
   const items = [
     { t: "Загрузить данные", s: DATA ? "сейчас: на " + DATA.meta.data_na_utro : "данных пока нет", h: "#load" },
+    { t: "Штатное расписание", s: P() && P().shtat ? "на " + P().shtat.data + " · окладники, сдельщики, вакансии" : "нет в архиве", h: "#shtat/okl" },
     { t: "О данных", s: "даты источников, предупреждения сборщика", h: "#about" },
     { t: "Настройки", s: "тема, порог дней для мешкотары", h: "#settings" }
   ];
   return {
     top: backbar("Справочник экономиста", "Ещё"),
     main: items.map((i) => `<button class="row" data-go="${i.h}"><span class="m"><span class="n">${i.t}</span><span class="d">${esc(i.s)}</span></span>${I.chev}</button>`).join("") +
-      `<div class="note">Выработка, тарифы, штатное расписание, заметки — следующий шаг. Версия приложения ${APP_VERSION}.</div>`
+      `<div class="note">Выработка, тарифы, заметки — следующий шаг. Версия приложения ${APP_VERSION}.</div>`
   };
 }
 
@@ -595,6 +596,7 @@ function render(mainOnly) {
     case "load": v = viewLoad(); break;
     case "about": v = viewAbout(); break;
     case "settings": v = viewSettings(); break;
+    case "shtat": v = viewShtat(r.b); break;
     default: v = viewHome();
   }
   document.getElementById("main").innerHTML = v.main;
