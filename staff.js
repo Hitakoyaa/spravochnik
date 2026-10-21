@@ -280,18 +280,32 @@ function empTabel(s) {
   if (!months.length) return `<div class="empty">В табеле этого человека нет</div>`;
   const pp = perPicker("t", months), st = tabelStat(s.tab, pp.sel);
   const absTxt = Object.entries(ABS).map(([c, [l]]) => st.abs[c] ? `<div><span>${l}</span><b class="num">${st.abs[c]} дн.</b></div>` : "").join("");
+  // табель 1С (расчётная ведомость, выровнен по 5/2) — только закрытые месяцы
+  const t1 = (T.t1c || {})[s.tab] || {};
+  const sel1 = pp.sel.filter((k) => t1[k]);
+  const c1 = sel1.reduce((a, k) => [a[0] + t1[k][0], a[1] + t1[k][1]], [0, 0]);
+  const f1 = pp.sel.filter((k) => t1[k]).length ? tabelStat(s.tab, sel1) : null;
   let h = pp.html + `<div class="card big">
-      <div class="l">${esc(perText(pp.sel))}${st.partial ? " · по " + esc(T.po) : ""}</div>
-      <div class="v num">${st.dn} <small style="font-size:15px;color:var(--muted)">из ${st.norm[0]} дн. нормы</small></div>
+      <div class="l">${esc(perText(pp.sel))}${st.partial ? " · по " + esc(T.po) : ""} · фактически (онлайн-табель)</div>
+      <div class="v num">${st.dn} <small style="font-size:15px;color:var(--muted)">дн. · норма ${st.norm[0]}</small></div>
       <div class="note num" style="padding:0">${nf0.format(st.h)} ч из ${st.norm[1]} ч${st.yavka != null ? ` · явка ${st.yavka}%` : ""}</div>
-    </div>
-    <div class="card kv">${absTxt || `<div><span>Отпуск, больничный, прогулы</span><b>нет</b></div>`}</div>`;
+    </div>`;
+  if (sel1.length) {
+    const dd = f1.dn - c1[0], dh = f1.h - c1[1];
+    h += `<div class="card kv">
+      <div><span>По табелю 1С${sel1.length < pp.sel.length ? (sel1.length > 2 ? " (закрытые месяцы, по " + mLabel(sel1[sel1.length - 1], true) + ")" : " (" + sel1.map((k) => mLabel(k, true)).join(", ") + ")") : ""}</span><b class="num">${nf0.format(c1[0])} дн. · ${nf0.format(c1[1])} ч</b></div>
+      <div><span>Фактически за те же месяцы</span><b class="num">${f1.dn} дн. · ${nf0.format(f1.h)} ч</b></div>
+      <div><span>Разница (факт − 1С)</span><b class="num ${dd > 0 || dh > 0 ? "warn" : ""}">${dd > 0 ? "+" : ""}${dd} дн. · ${dh > 0 ? "+" : ""}${nf0.format(dh)} ч</b></div>
+    </div>`;
+  }
+  h += `<div class="card kv">${absTxt || `<div><span>Отпуск, больничный, прогулы</span><b>нет</b></div>`}</div>`;
   if (pp.sel.length === 1) h += calStrip(s.tab, pp.sel[0]) + `<div class="note">Цифры — часы; о — отпуск, б/л — больничный, б/с — без сохранения, н — отсутствие, в — выходной.</div>`;
-  else h += `<div class="card tbl"><div class="tr th"><span>Месяц</span><span>Дни</span><span>Часы</span><span>Отсутств.</span></div>${st.months.map((r) => {
+  else h += `<div class="card tbl"><div class="tr th tr5"><span>Месяц</span><span>Факт дн/ч</span><span>1С дн/ч</span><span>Норма</span><span>Отсутств.</span></div>${st.months.map((r) => {
     const a = Object.entries(r.abs).map(([c, n]) => c + " " + n).join(", ");
-    return `<div class="tr"><span>${mLabel(r.k, true)}</span><span class="num">${r.dn}/${r.norm[0]}</span><span class="num">${nf0.format(r.h)}</span><span>${esc(a || "—")}</span></div>`;
+    const o = t1[r.k];
+    return `<div class="tr tr5"><span>${mLabel(r.k, true)}</span><span class="num ${o && (r.dn > o[0] || r.h > o[1]) ? "warn" : ""}">${r.dn}/${nf0.format(r.h)}</span><span class="num">${o ? o[0] + "/" + nf0.format(o[1]) : "—"}</span><span class="num">${r.norm[0]}</span><span>${esc(a || "—")}</span></div>`;
   }).join("")}</div>`;
-  h += `<div class="note">Табель по ${esc(T.po)}. Явка — доля отработанных дней среди рабочих и пропущенных (отпуск, больничный, б/с, отсутствие).</div>`;
+  h += `<div class="note">Факт — онлайн-табель по ${esc(T.po)}, все отработанные дни и часы. 1С — дни и часы из расчётной ведомости (выровнены по 5/2), только закрытые месяцы. Явка — доля отработанных дней среди рабочих и пропущенных (отпуск, больничный, б/с, отсутствие).</div>`;
   return h;
 }
 
