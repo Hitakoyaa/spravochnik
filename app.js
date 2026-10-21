@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.8.1";
+const APP_VERSION = "1.9";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -99,6 +99,7 @@ async function loadArchive(file, force) {
     razn: JSON.parse(files["raznaryadki.json"]), loadedAt: new Date().toLocaleString("ru-RU"), fileName: file.name
   };
   if (files["vyrabotka.json"]) d.vyr = JSON.parse(files["vyrabotka.json"]);
+  if (files["gsm.json"]) d.gsm = JSON.parse(files["gsm.json"]);
   if (files["personal.json"]) {
     const j = (n) => files[n] ? JSON.parse(files[n]) : null;
     d.pers = { personal: j("personal.json"), shtat: j("shtat.json"), tabel: j("tabel.json"), prikazy: j("prikazy.json"), zarplata: j("zarplata.json") };
@@ -124,7 +125,7 @@ const GROUPS = [
   { id: "krupa", label: "Крупа", g: "Крупа" },
   { id: "kombi", label: "Комбикорм", g: "Комбикорм" }
 ];
-const CHIPS = [{ id: "all", label: "Все" }, ...GROUPS, { id: "zerno", label: "Зерно" }, { id: "tara", label: "Мешкотара" }];
+const CHIPS = [{ id: "all", label: "Все" }, ...GROUPS, { id: "zerno", label: "Зерно" }, { id: "tara", label: "Мешкотара" }, { id: "gsm", label: "ГСМ и уголь" }];
 
 function products() { return DATA ? DATA.ostatki.pozicii : []; }
 function razn() { return DATA ? DATA.razn.stroki : []; }
@@ -212,7 +213,7 @@ function viewHome() {
     { l: "К отгрузке", v: T(toShip), u: "т", s: act.length + " " + plural(act.length, "активная строка", "активные строки", "активных строк"), h: "#razn/active" },
     { l: "Корм. мука и отруби", v: T(korm), u: "т", s: "мельницы и комбикорм", h: "#stock/korm" }
   ];
-  const G = { prod: [], tara: [], syrie: [], sbor: [] };
+  const G = { prod: [], tara: [], syrie: [], gsm: gsmAttention(), sbor: [] };
   (DATA.ostatki.vnimanie || []).forEach((a) => {
     if (a.tip === "tara") G.tara.push({ t: a.name, v: "−" + N(-a.svobodno_kg) + " шт", sort: a.svobodno_kg, sub: "под разнарядки", h: "#tara/" + encodeURIComponent(a.key), bad: true });
     else if (a.tip === "syrie") G.syrie.push({ t: a.name, v: "−" + T(-a.svobodno_kg) + " т", sort: a.svobodno_kg, h: "#razn/kombi", bad: true });
@@ -232,6 +233,7 @@ function viewHome() {
     { id: "prod", title: "Продукции не хватает под разнарядки", sum: G.prod.length ? "надо вытарить всего " + T(G.prod.reduce((s, x) => s + x.kg, 0)) + " т" : "", go: "#stock/all" },
     { id: "tara", title: "Мешкотара и этикетки", sum: (() => { const d = G.tara.filter((x) => x.sub === "под разнарядки").length, l = G.tara.length - d; return [d ? `не хватает под разнарядки: ${d}` : "", l ? `запас меньше ${SET.porog} дн.: ${l}` : ""].filter(Boolean).join(" · "); })(), go: "#stock/tara" },
     { id: "syrie", title: "Сырьё для комбикорма", sum: "не хватает под потребность хозяйств ТНК", go: "#razn/kombi" },
+    { id: "gsm", title: "ГСМ и уголь", sum: `запас меньше ${SET.porog} дн. по среднему расходу`, go: "#stock/gsm" },
     { id: "sbor", title: "Предупреждения сборщика", sum: "проверьте файлы на ПК", go: "#about" }
   ].filter((g) => G[g.id].length);
   const old = daysOld(DATA.meta.data_na_utro);
@@ -292,6 +294,7 @@ function viewStock(chip) {
   if (!DATA) return { top: header("Остатки", "Поиск по остаткам"), main: noData() };
   chip = CHIPS.find((c) => c.id === chip) ? chip : "all";
   const chips = `<div class="chips scroll">${CHIPS.map((c) => `<button class="chip ${c.id === chip ? "on" : ""}" data-go="#stock/${c.id}">${c.label}</button>`).join("")}</div>`;
+  if (chip === "gsm") return { top: header("Остатки · ГСМ и уголь", "Техника, водитель, назначение"), main: chips + viewGsmBody() };
   let body = "";
   const ph = chip === "zerno" ? "Культура или фирма" : chip === "tara" ? "Мешок, этикетка, продукция" : "Поиск по остаткам";
   if (chip === "zerno") {
