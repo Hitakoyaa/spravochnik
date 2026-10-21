@@ -18,6 +18,7 @@ function gAvg(get, n) {
   }
   return s / n;
 }
+function ugolAvg(u) { return u.sezon_dney ? (u.rashod_s_nach || 0) / u.sezon_dney : gAvg((x) => x.ur, 7); }
 function gDays(ost, avg) { return avg > 0 ? ost / avg : null; }
 function gDaysTxt(d) { return d == null ? "расхода не было" : "хватит на ~" + nf0.format(Math.floor(d)) + " " + plural(Math.floor(d), "день", "дня", "дней"); }
 
@@ -90,29 +91,25 @@ function viewGsmBody() {
     h += `<div class="h2">Топливо · ТОО «Урожай»</div>` + fuels.map((f) => gsmFuelCard(b0, f)).join("");
     if (fuels.includes("дизтопливо")) h += gBars(gSeries((x) => (x.r || {})["дизтопливо"], 30), "Расход дизтоплива по дням, л (30 дней)", "л");
   }
-  if (g.balans && g.balans.length) {
-    h += `<div class="h2">Баланс дизтоплива по организациям</div><div class="card kv">${g.balans.map((x) => `<div><span>${esc(x.label)}</span><b class="num ${x.v < 0 ? "bad" : ""}">${L(x.v)}</b></div>`).join("")}</div>
-      <div class="note">Минус — организация взяла с АЗС «Урожая» больше, чем завезла.</div>`;
-  }
   const b1 = g.bloki[1];
   if (b1 && b1.toplivo.some((f) => (b1.rashod_s_nach || {})[f] || (b1.ost || {})[f])) {
     h += `<div class="h2">Сторонние организации</div><div class="card kv">${b1.toplivo.filter((f) => (b1.rashod_s_nach || {})[f] || (b1.rashod_den || {})[f]).map((f) => `<div><span>${esc(f)}: расход за день / с начала</span><b class="num">${L((b1.rashod_den || {})[f])} / ${L((b1.rashod_s_nach || {})[f])}</b></div>`).join("")}</div>`;
   }
   const u = g.ugol;
   if (u) {
-    const avg7 = gAvg((x) => x.ur, 7), d = gDays(u.ost || 0, avg7);
+    const avg7 = ugolAvg(u), d = gDays(u.ost || 0, avg7), ss = u.sezon_start ? " (с " + u.sezon_start.slice(0, 5) + ")" : "";
     const cls = d == null ? "b-mute" : d < 7 ? "b-bad" : d < SET.porog ? "b-warn" : "b-ok";
     h += `<div class="h2">Уголь · котельная</div><div class="card shg"><div class="shh"><span class="m"><span class="n">Остаток ${T(u.ost)} т</span>
         <span class="d num">на ${esc(g.data)}</span></span><span class="badge ${cls}" style="align-self:center">${esc(gDaysTxt(d))}</span></div>
       <div class="card kv" style="border:0;border-radius:0">
         <div><span>Расход за день</span><b class="num">${T(u.rashod_den)} т</b></div>
-        <div><span>В среднем в день (7 дн.)</span><b class="num">${T(avg7)} т</b></div>
+        <div><span>В среднем в день за сезон${esc(ss)}</span><b class="num">${T(avg7)} т</b></div>
         <div><span>Приход за день</span><b class="num">${T(u.prihod_den)} т</b></div>
-        <div><span>Расход с начала сезона</span><b class="num">${T(u.rashod_s_nach)} т</b></div>
-        <div><span>Приход с начала сезона</span><b class="num">${T(u.prihod_s_nach)} т</b></div>
+        <div><span>Расход с начала сезона${esc(ss)}</span><b class="num">${T(u.rashod_s_nach)} т</b></div>
+        <div><span>Приход с начала сезона${esc(ss)}</span><b class="num">${T(u.prihod_s_nach)} т</b></div>
         <div><span>Остаток на начало сезона</span><b class="num">${T(u.sezon_nach)} т</b></div>
         ${(u.marki || []).filter((m) => m.ost).map((m) => `<div><span>${esc(m.marka)}</span><b class="num">${T(m.ost)} т</b></div>`).join("")}
-      </div></div>` + gBars(gSeries((x) => x.ur, 30), "Расход угля по дням, кг (30 дней)", "кг");
+      </div></div>` + gBars(gSeries((x) => x.ur, Math.min(62, Math.max(7, u.sezon_dney || 30))), "Расход угля по дням, кг" + ss, "кг");
   }
   h += gsmPotr();
   return h;
@@ -128,7 +125,7 @@ function gsmAttention() {
     if (d != null && d < SET.porog) out.push({ t: f[0].toUpperCase() + f.slice(1) + " · " + L(ost), v: gDaysTxt(d).replace("хватит на ", ""), sort: d, h: "#stock/gsm", bad: d < 7 });
   });
   if (g.ugol) {
-    const d = gDays(g.ugol.ost || 0, gAvg((x) => x.ur, 7));
+    const d = gDays(g.ugol.ost || 0, ugolAvg(g.ugol));
     if (d != null && d < SET.porog) out.push({ t: "Уголь · " + T(g.ugol.ost) + " т", v: gDaysTxt(d).replace("хватит на ", ""), sort: d, h: "#stock/gsm", bad: d < 7 });
   }
   return out;
