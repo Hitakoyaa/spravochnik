@@ -243,6 +243,7 @@ function viewDep(name) {
   const vac = vacOf(name);
   const dsel = ZP ? resolvePer(PER.d, ZP.mesyacy) : [];
   const pz = (s) => ZP ? zpSum(s.tab, dsel).s.k : null;
+  main += overList(d.ppl);
   main += `<div class="h2">Сотрудники · ${d.n}${ZP ? " · начислено за период" : ""}</div>` + d.ppl.sort((a, b) => low(a.fio) < low(b.fio) ? -1 : 1).map((s) => staffRow(s, pz(s))).join("");
   if (vac.length) main += `<div class="h2">Свободно по штатке · ${nf0.format(vac.reduce((s, v) => s + v.vakant, 0))} ед.</div><div class="card shg">${vac.map(vacRow).join("")}</div>`;
   return { top: backbar("Подразделение", name), main };
@@ -451,4 +452,24 @@ function viewShtat(b) {
     body += `<div class="note">Свободно = ед. по штатке − работающие (в т. ч. по совмещению из табеля и файла «Совмещения») − сотрудники в декрете/по уходу за ребёнком (место за ними сохраняется; кто работает на их месте — «замещают»). «Ищут» — по должности есть строка «ВАКАНСИЯ» в табеле. Сумма — оклад + премия/KPI на свободные ед. в месяц.</div>`;
   }
   return { top: top(tab === "okl" ? "Окладники" : tab === "sdel" ? "Сдельщики" : "Вакансии") + `<div style="padding:0 16px 8px">${srch}</div>`, main: head + seg + body };
+}
+
+/* кто в последнем закрытом месяце отработал по онлайн-табелю больше, чем по табелю 1С */
+function overList(ppl) {
+  const T = P() && P().tabel;
+  if (!T || !T.t1c) return "";
+  const ms = [...new Set(Object.values(T.t1c).flatMap((v) => Object.keys(v)))].sort();
+  const m = ms[ms.length - 1];
+  if (!m) return "";
+  const rows = ppl.map((s) => {
+    const o = (T.t1c[s.tab] || {})[m];
+    if (!o || !(T.ludi[s.tab] || {})[m]) return null;
+    const st = tabelStat(s.tab, [m]);
+    return { s, dd: st.dn - o[0], dh: st.h - o[1], f: st, o };
+  }).filter((x) => x && (x.dh > 0 || x.dd > 0)).sort((a, b) => b.dh - a.dh);
+  if (!rows.length) return "";
+  return `<div class="h2">Сверх табеля 1С · ${esc(mLabel(m))} · ${rows.length}</div><div class="card shg">${rows.map((x) =>
+    `<button class="shr" style="width:100%;text-align:left" data-go="#emp/${encodeURIComponent(x.s.tab)}/t"><span class="m"><span class="n2">${esc(shortFio(x.s.fio))}</span>
+      <span class="d num">${esc(x.s.dolzh)} · факт ${x.f.dn} дн./${nf0.format(x.f.h)} ч, 1С ${x.o[0]}/${nf0.format(x.o[1])}</span></span>
+      <span class="r2"><span class="num rv2 warn">+${nf0.format(x.dh)} ч</span><span class="d num">+${x.dd} дн.</span></span></button>`).join("")}</div>`;
 }
