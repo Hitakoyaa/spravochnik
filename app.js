@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.10.2";
+const APP_VERSION = "2.0";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -146,6 +146,7 @@ function route() {
 }
 window.addEventListener("hashchange", () => {
   if (location.hash === "#share") { takeShared(); return; }
+  if (syncTakeSetup()) { render(); return; }
   render(); document.getElementById("main").scrollTop = 0;
 });
 
@@ -565,7 +566,7 @@ function viewSoon(title, stage, what) {
 
 function viewMore() {
   const items = [
-    { t: "Загрузить данные", s: DATA ? "сейчас: на " + DATA.meta.data_na_utro : "данных пока нет", h: "#load" },
+    { t: "Загрузить данные", s: (DATA ? "сейчас: на " + DATA.meta.data_na_utro : "данных пока нет") + (typeof SYNC !== "undefined" && SYNC && SYNC.ek ? " · автообновление включено" : ""), h: "#load" },
     { t: "Выработка", s: V() ? "по подразделениям, данные по " + V().po : "нет в архиве", h: "#vyr" },
     { t: "Штатное расписание", s: P() && P().shtat ? "на " + P().shtat.data + " · окладники, сдельщики, вакансии" : "нет в архиве", h: "#shtat/okl" },
     { t: "О данных", s: "даты источников, предупреждения сборщика", h: "#about" },
@@ -593,6 +594,7 @@ function viewLoad() {
       ${DATA ? `<div class="note" style="padding:0">Загружено ${esc(DATA.loadedAt)} из ${esc(DATA.fileName || "архива")}</div>` : ""}
       <button class="btn" data-act="pick">${I.upload} Выбрать архив</button>
     </div>
+    ${syncCard()}
     <div class="h2">Как обновить</div>
     <div class="card kv">
       <div><span>1. На ПК</span><b>«Собрать_для_телефона» → кнопка</b></div>
@@ -761,7 +763,9 @@ if (window.matchMedia) {
 }
 
 applyTheme();
+syncTakeSetup();
 if (location.hash === "#share") takeShared(); else render();
+setTimeout(() => syncNow(true), 800);
 
 if ("serviceWorker" in navigator) {
   // при выходе новой версии — один раз перезагрузиться, чтобы сразу открылась она
