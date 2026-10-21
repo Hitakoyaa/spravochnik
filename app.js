@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "1.9.1";
+const APP_VERSION = "1.10";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -152,7 +152,7 @@ window.addEventListener("hashchange", () => {
 const TABS = [
   { id: "home", label: "Главная", ic: I.home, h: "#home", act: ["home", "vyr", "vyrd"] },
   { id: "stock", label: "Остатки", ic: I.stock, h: "#stock/all", act: ["stock", "item", "zerno", "tara", "taraall"] },
-  { id: "razn", label: "Разнарядки", ic: I.ship, h: "#razn/active", act: ["razn", "rz"] },
+  { id: "razn", label: "Разнарядки", ic: I.ship, h: "#razn/active", act: ["razn", "rz", "kontr"] },
   { id: "staff", label: "Персонал", ic: I.staff, h: "#staff", act: ["staff", "emp", "dep"] },
   { id: "req", label: "Заявки", ic: I.req, h: "#req", act: ["req"] },
   { id: "more", label: "Ещё", ic: I.more, h: "#more", act: ["more", "load", "about", "settings", "shtat"] }
@@ -269,6 +269,8 @@ function globalSearch() {
     z.po_firmam.forEach((f) => match(Q, f.firma, z.kultura) && !match(Q, z.kultura) && res.push({ ty: "Зерно · фирма", t: f.firma, s: `${z.kultura}: ${T(f.ostatok_kg)} т`, h: "#zerno/" + encodeURIComponent(z.key) }));
   });
   razn().forEach((x) => match(Q, x.pokupatel, x.produkt_name, x.nomer) && res.push({ ty: isK(x) ? "Комбикорм · хозяйство ТНК" : "Разнарядка" + (x.nomer ? " № " + x.nomer : ""), t: x.pokupatel, s: `${x.produkt_name} · остаток ${T(x.ostatok_kg)} т`, h: "#rz/" + encodeURIComponent(x.key) }));
+  const seenK = new Set();
+  razn().forEach((x) => { const k = kKey(x.pokupatel); if (!seenK.has(k) && match(Q, x.pokupatel)) { seenK.add(k); const l = kontrRows(x.pokupatel).filter((y) => y.status === "aktivnaya"); res.unshift({ ty: "Контрагент", t: x.pokupatel, s: `активных разнарядок: ${l.length} · остаток ${T(l.reduce((t, y) => t + y.ostatok_kg, 0))} т`, h: "#kontr/" + encodeURIComponent(x.pokupatel) }); } });
   staffSearch(res);
   tara().forEach((m) => match(Q, m.name, m.mesto, (m.dlya || []).join(" ")) && res.push({ ty: "Мешкотара · " + m.mesto, t: m.name, s: `${N(m.ostatok)} ${m.ed}` + (m.hvatit_dney != null ? " · " + daysTxt(m.hvatit_dney) : ""), h: "#tara/" + encodeURIComponent(m.key) }));
   return `<div class="note" style="font-weight:700">Найдено: ${res.length}</div>` + (res.length ? res.slice(0, 80).map(resRow).join("") : `<div class="empty">Ничего не найдено</div>`);
@@ -403,7 +405,7 @@ function viewZerno(key) {
     <div class="h2">По годам урожая</div>
     <div class="card kv">${Object.keys(years).sort().reverse().map((y) => `<div><span>Урожай ${y}</span><b class="num">${T(years[y])} т</b></div>`).join("")}</div>
     <div class="h2">По фирмам · ${z.po_firmam.length}</div>
-    <div class="card">${z.po_firmam.map((f) => `<div class="firm"><div class="fh"><span>${esc(f.firma)}</span><span class="num">${T(f.ostatok_kg)} т</span></div>
+    <div class="card">${z.po_firmam.map((f) => `<div class="firm" data-go="#kontr/${encodeURIComponent(f.firma)}" style="cursor:pointer"><div class="fh"><span>${esc(f.firma)} ›</span><span class="num">${T(f.ostatok_kg)} т</span></div>
       ${Object.keys(f.po_godam).length > 1 ? `<div class="fy">${Object.entries(f.po_godam).sort().reverse().map(([y, v]) => `<span class="badge b-mute num">${y}: ${T(v)} т</span>`).join("")}</div>` : `<div class="note" style="padding:2px 0 0">урожай ${Object.keys(f.po_godam)[0]}</div>`}</div>`).join("")}</div>`;
   return { top: backbar("Зерно на элеваторе", z.kultura), main };
 }
@@ -506,13 +508,55 @@ function viewRz(key) {
       <div class="grid3 num" style="font-size:12px"><span>${isK(x) ? "Потребность" : "Всего"}<br><b>${T(x.obem_kg)} т</b></span><span>Отгружено<br><b>${T(x.otgruzheno_kg)} т</b></span><span>Остаток<br><b>${T(x.ostatok_kg)} т</b></span></div></div>
     <div class="card kv">
       ${isK(x) ? "" : `<div><span>Номер</span><b>${x.nomer ? esc(x.nomer) : "без номера"}</b></div>`}
-      <div><span>${isK(x) ? "Хозяйство ТНК" : "Покупатель"}</span><b>${esc(x.pokupatel)}</b></div>
+      <div><span>${isK(x) ? "Хозяйство ТНК" : "Покупатель"}</span><b>${kontrLink(x.pokupatel)}</b></div>
       <div><span>Продукция</span><b>${esc(x.produkt_name)}</b></div>
       ${x.vagonov != null ? `<div><span>Остаток, вагонов</span><b class="num">${nf1.format(x.vagonov)}</b></div>` : ""}
       ${x.pometka ? `<div><span>${isK(x) ? "Период" : "Пометка"}</span><b class="${isK(x) ? "" : "warn"}">${esc(x.pometka)}</b></div>` : ""}
     </div>
     ${p ? `<div class="h2">Остаток продукции</div>` + prodRow(p) : ""}`;
   return { top: backbar(isK(x) ? "Комбикорм · хозяйство ТНК" : "Разнарядка" + (x.nomer ? " № " + x.nomer : ""), x.pokupatel), main };
+}
+
+
+/* ───── карточка контрагента: все его разнарядки и зерно на элеваторе ───── */
+function kKey(s) { return low(s).replace(/[«»"'“”.,]/g, " ").replace(/\b(тоо|ао|ип|кх|кфх|пк|оао|зао)\b/g, " ").replace(/\s+/g, " ").trim(); }
+function kontrRows(name) { const k = kKey(name); return razn().filter((x) => kKey(x.pokupatel) === k); }
+function kontrZerno(name) {
+  const k = kKey(name), out = [];
+  if (k.length < 3) return out;
+  zerno().forEach((z) => z.po_firmam.forEach((f) => { const fk = kKey(f.firma); if (fk === k || fk.includes(k) || k.includes(fk)) out.push({ z, f }); }));
+  return out;
+}
+function kontrLink(name) { return `<button class="ok" style="font-weight:800;text-align:right" data-go="#kontr/${encodeURIComponent(name)}">${esc(name)} ›</button>`; }
+function viewKontr(name) {
+  const rows = kontrRows(name), zr = kontrZerno(name);
+  if (!rows.length && !zr.length) return { top: backbar("Контрагент", name), main: `<div class="empty">Нет в текущих данных</div>` };
+  const act = rows.filter((x) => x.status === "aktivnaya"), done = rows.filter((x) => x.status !== "aktivnaya");
+  const s = (l, k) => l.reduce((t, x) => t + (x[k] || 0), 0);
+  let main = "";
+  if (rows.length) {
+    const pr = s(act, "obem_kg") ? s(act, "otgruzheno_kg") / s(act, "obem_kg") * 100 : 0;
+    main += `<div style="padding:14px 16px;border-radius:18px;background:var(--accentSoft);display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;justify-content:space-between;font-weight:800;color:var(--accent)"><span>Активных разнарядок: ${act.length}${done.length ? " · выполненных: " + done.length : ""}</span><span class="num">${nf1.format(pr)}%</span></div>
+      <div class="bar" style="background:var(--surface)"><i style="width:${Math.min(100, pr)}%"></i></div>
+      <div class="grid3 num" style="font-size:12px"><span>Всего<br><b>${T(s(act, "obem_kg"))} т</b></span><span>Отгружено<br><b>${T(s(act, "otgruzheno_kg"))} т</b></span><span>Остаток<br><b>${T(s(act, "ostatok_kg"))} т</b></span></div></div>`;
+    const byP = {};
+    act.forEach((x) => { const p = byP[x.produkt] = byP[x.produkt] || { name: x.produkt_name, key: x.produkt, ost: 0 }; p.ost += x.ostatok_kg; });
+    const pl = Object.values(byP).filter((p) => p.ost > 0).sort((a, b) => b.ost - a.ost);
+    if (pl.length) main += `<div class="h2">К отгрузке по продукции</div><div class="card kv">${pl.map((p) => {
+      const st = byKey(products(), p.key);
+      const hint = st ? (st.ostatok_kg >= p.ost ? `<span class="ok">на складе ${T(st.ostatok_kg)} т</span>` : `<span class="bad">на складе ${T(st.ostatok_kg)} т</span>`) : "";
+      return `<div><span>${esc(p.name)}${hint ? "<br><small>" + hint + "</small>" : ""}</span><b class="num">${T(p.ost)} т</b></div>`;
+    }).join("")}</div>`;
+    if (act.length) main += `<div class="h2">Активные · ${act.length}</div>` + act.map(rznRow).join("");
+    if (done.length) main += `<div class="h2">Выполненные · ${done.length}</div>` + done.map(rznRow).join("");
+  }
+  if (zr.length) {
+    main += `<div class="h2">Зерно на элеваторе · ${T(zr.reduce((t, x) => t + x.f.ostatok_kg, 0))} т</div><div class="card">${zr.map(({ z, f }) =>
+      `<button class="firm" style="width:100%;text-align:left" data-go="#zerno/${encodeURIComponent(z.key)}"><div class="fh"><span>${esc(z.kultura)}</span><span class="num">${T(f.ostatok_kg)} т</span></div>
+       <div class="note" style="padding:2px 0 0">${esc(f.firma)}${Object.keys(f.po_godam).length ? " · урожай " + Object.keys(f.po_godam).sort().join(", ") : ""}</div></button>`).join("")}</div>`;
+  }
+  return { top: backbar(rows.length && rows.every(isK) ? "Хозяйство ТНК" : "Контрагент", name), main };
 }
 
 function viewSoon(title, stage, what) {
@@ -604,6 +648,7 @@ function render(mainOnly) {
     case "taraall": v = viewTaraAll(); break;
     case "razn": v = viewRazn(r.b); break;
     case "rz": v = viewRz(r.b); break;
+    case "kontr": v = viewKontr(r.b); break;
     case "staff": v = viewStaff(r.b); break;
     case "emp": v = viewEmp(r.b); break;
     case "dep": v = viewDep(r.b); break;
