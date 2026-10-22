@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "2.0";
+const APP_VERSION = "2.1";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -435,7 +435,8 @@ function viewTara(key) {
 const RZF = [{ id: "active", label: "Активные" }, { id: "done", label: "Выполненные" }, { id: "all", label: "Все" }, { id: "kombi", label: "Комбикорм ТНК" }];
 function rznRow(x) {
   const k = isK(x);
-  const st = x.status === "aktivnaya" ? `<span class="badge b-info">${k ? "к отгрузке" : "активная"}</span>` : `<span class="badge b-ok">${k ? "отгружено" : "выполнена"}</span>`;
+  const st = x.status === "aktivnaya" ? `<span class="badge b-info">${k ? "к отгрузке" : "активная"}</span>`
+    : x.status === "zakryta" ? `<span class="badge b-warn">закрыта с остатком</span>` : `<span class="badge b-ok">${k ? "отгружено" : "выполнена"}</span>`;
   const head = k ? `<span class="badge b-mute">${esc((x.pometka || "потребность").replace(/^Потребность/i, "потребность"))}</span>`
     : `<span class="num" style="font-size:12px;font-weight:800;color:var(--muted)">${x.nomer ? "№ " + esc(x.nomer) : "без номера"}</span>`;
   const right = !k && x.vagonov != null ? `<span class="num" style="margin-left:auto;font-size:12px;color:var(--muted)">${nf1.format(x.vagonov)} ваг.</span>` : "";
@@ -444,14 +445,14 @@ function rznRow(x) {
     <span><span class="n" style="font-size:15px">${esc(x.pokupatel)}</span><span class="d">${esc(x.produkt_name)}</span></span>
     <span class="grid3 num"><span>${k ? "Потребность" : "Всего"}<br><b>${T(x.obem_kg)}</b></span><span>Отгружено<br><b>${T(x.otgruzheno_kg)}</b></span><span>Остаток<br><b>${T(x.ostatok_kg)}</b></span></span>
     <span class="bar"><i style="width:${Math.min(100, x.procent)}%"></i></span>
-    <span class="num" style="font-size:12px;color:var(--muted)">отгружено ${nf1.format(x.procent)}% · тонны</span></button>`;
+    <span class="num" style="font-size:12px;color:var(--muted)">отгружено ${nf1.format(x.procent)}% · тонны${x.snyata ? " · снята из свода " + esc(x.snyata) : ""}</span></button>`;
 }
 
 function viewRazn(f) {
   if (!DATA) return { top: header("Разнарядки", "Покупатель, продукция, номер"), main: noData() };
   f = RZF.find((z) => z.id === f) ? f : "active";
-  const list = razn().filter((x) => (f === "kombi" ? isK(x) : !isK(x) && (f === "all" || (f === "active" ? x.status === "aktivnaya" : x.status === "vypolnena"))) && match(Q, x.pokupatel, x.produkt_name, x.nomer, x.pometka));
-  const tot = list.reduce((s, x) => s + x.obem_kg, 0), done = list.reduce((s, x) => s + x.otgruzheno_kg, 0), rest = list.reduce((s, x) => s + x.ostatok_kg, 0);
+  const list = razn().filter((x) => (f === "kombi" ? isK(x) : !isK(x) && (f === "all" || (f === "active" ? x.status === "aktivnaya" : x.status !== "aktivnaya"))) && match(Q, x.pokupatel, x.produkt_name, x.nomer, x.pometka));
+  const tot = list.reduce((s, x) => s + x.obem_kg, 0), done = list.reduce((s, x) => s + x.otgruzheno_kg, 0), rest = list.reduce((s, x) => s + (x.status === "zakryta" ? 0 : x.ostatok_kg), 0);
   const pct = tot ? done / tot * 100 : 0;
   const chips = `<div class="chips scroll">${RZF.map((c) => `<button class="chip ${c.id === f ? "on" : ""}" data-go="#razn/${c.id}">${c.label}</button>`).join("")}</div>`;
   const sum = `<div style="padding:14px 16px;border-radius:18px;background:var(--accentSoft);display:flex;flex-direction:column;gap:8px">
@@ -463,7 +464,7 @@ function viewRazn(f) {
     const body = (kv && kv.pozicii ? kvotaCard(kv) : "") + syrieCard(DATA.razn.kombikorm_syrie) + `<div class="h2">По хозяйствам</div>` + list.map(rznRow).join("") + (list.length ? "" : `<div class="empty">Ничего не найдено</div>`);
     return { top: header("Разнарядки", "Хозяйство или вид комбикорма"), main: chips + sum + body };
   }
-  const note = f === "done" && !list.length && !Q ? `<div class="empty">Выполненных нет. Строка попадает сюда, если в листе «Все» она осталась с остатком 0.</div>` : (!list.length ? `<div class="empty">Ничего не найдено</div>` : "");
+  const note = f === "done" && !list.length && !Q ? `<div class="empty">Завершённых пока нет. Разнарядка попадает сюда, когда её убирают из свода: сборщик помнит прошлую сборку.</div>` : (!list.length ? `<div class="empty">Ничего не найдено</div>` : "");
   return { top: header("Разнарядки", "Покупатель, продукция, номер"), main: chips + sum + list.map(rznRow).join("") + note };
 }
 
@@ -504,7 +505,7 @@ function viewRz(key) {
   if (!x) return { top: backbar("Разнарядка", ""), main: `<div class="empty">Нет в текущих данных</div>` };
   const p = byKey(products(), x.produkt);
   const main = `<div style="padding:14px 16px;border-radius:18px;background:var(--accentSoft);display:flex;flex-direction:column;gap:8px">
-      <div style="display:flex;justify-content:space-between;font-weight:800;color:var(--accent)"><span>${x.status === "aktivnaya" ? (isK(x) ? "К отгрузке" : "Активная") : (isK(x) ? "Отгружено полностью" : "Выполнена")}</span><span class="num">${nf1.format(x.procent)}%</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:800;color:var(--accent)"><span>${x.status === "aktivnaya" ? (isK(x) ? "К отгрузке" : "Активная") : x.status === "zakryta" ? "Закрыта с остатком" : (isK(x) ? "Отгружено полностью" : "Выполнена")}</span><span class="num">${nf1.format(x.procent)}%</span></div>
       <div class="bar" style="background:var(--surface)"><i style="width:${Math.min(100, x.procent)}%"></i></div>
       <div class="grid3 num" style="font-size:12px"><span>${isK(x) ? "Потребность" : "Всего"}<br><b>${T(x.obem_kg)} т</b></span><span>Отгружено<br><b>${T(x.otgruzheno_kg)} т</b></span><span>Остаток<br><b>${T(x.ostatok_kg)} т</b></span></div></div>
     <div class="card kv">
@@ -513,7 +514,10 @@ function viewRz(key) {
       <div><span>Продукция</span><b>${esc(x.produkt_name)}</b></div>
       ${x.vagonov != null ? `<div><span>Остаток, вагонов</span><b class="num">${nf1.format(x.vagonov)}</b></div>` : ""}
       ${x.pometka ? `<div><span>${isK(x) ? "Период" : "Пометка"}</span><b class="${isK(x) ? "" : "warn"}">${esc(x.pometka)}</b></div>` : ""}
+      ${x.snyata ? `<div><span>Убрана из свода</span><b>${esc(x.snyata)}</b></div>
+      <div><span>Остаток в последнем своде${x.posl_data ? " (" + esc(x.posl_data) + ")" : ""}</span><b class="num">${T(x.posl_ostatok_kg)} т</b></div>` : ""}
     </div>
+    ${x.snyata ? `<div class="note">${x.status === "zakryta" ? "Строку убрали из свода с заметным остатком — возможно, отменили или перенесли." : "Остаток был не больше вагона — считаю отгруженной полностью."}</div>` : ""}
     ${p ? `<div class="h2">Остаток продукции</div>` + prodRow(p) : ""}`;
   return { top: backbar(isK(x) ? "Комбикорм · хозяйство ТНК" : "Разнарядка" + (x.nomer ? " № " + x.nomer : ""), x.pokupatel), main };
 }
