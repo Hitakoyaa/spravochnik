@@ -1,7 +1,7 @@
 /* Справочник экономиста — приложение v1 (этап 1: Главная, Остатки, Разнарядки, загрузка данных). */
 "use strict";
 
-const APP_VERSION = "2.1";
+const APP_VERSION = "2.1.1";
 const LS_DATA = "spr_data_v1";
 const LS_SET = "spr_settings_v1";
 
@@ -138,7 +138,15 @@ function daysCls(d) { if (d == null) return "b-mute"; if (d < 7) return "b-bad";
 function daysTxt(d) { return d == null ? "нет расхода" : "~" + nf0.format(Math.floor(d)) + " " + plural(Math.floor(d), "день", "дня", "дней"); }
 
 /* ───────── навигация ───────── */
-function go(h) { if (location.hash !== h) location.hash = h; else render(); }
+/* позиция списка: уходя вперёд, запоминаем прокрутку и поиск; по «Назад» — возвращаем */
+const SAVED = {};
+let navFwd = false, pendingQ = null;
+function go(h) {
+  if (location.hash === h) { render(); return; }
+  SAVED[location.hash || "#home"] = { y: document.getElementById("main").scrollTop, q: Q };
+  navFwd = true;
+  location.hash = h;
+}
 function route() {
   const h = decodeURIComponent(location.hash.replace(/^#\/?/, ""));
   const [a, ...rest] = h.split("/");
@@ -147,7 +155,11 @@ function route() {
 window.addEventListener("hashchange", () => {
   if (location.hash === "#share") { takeShared(); return; }
   if (syncTakeSetup()) { render(); return; }
-  render(); document.getElementById("main").scrollTop = 0;
+  const s = !navFwd && SAVED[location.hash || "#home"];
+  navFwd = false;
+  if (s) pendingQ = s.q;
+  render();
+  document.getElementById("main").scrollTop = s ? s.y : 0;
 });
 
 const TABS = [
@@ -645,6 +657,7 @@ function render(mainOnly) {
   const r = route();
   const key = r.a + "/" + r.b.split("/")[0];
   if (key !== lastRoute) { Q = ""; lastRoute = key; }
+  if (pendingQ != null) { Q = pendingQ; pendingQ = null; }
   let v;
   switch (r.a) {
     case "stock": v = viewStock(r.b); break;
